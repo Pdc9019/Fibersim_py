@@ -1,0 +1,31 @@
+{
+  "global": {
+    "Rb": 32000000000.0,
+    "M": 2,
+    "sps": 32,
+    "Fs": 1024000000000.0,
+    "Nsym": 4096,
+    "Ptx": 0.01
+  },
+  "pulse": {
+    "type": "RRC",
+    "roll": 0.1,
+    "span": 10
+  },
+  "chain": [
+    { "type": "fiber", "par": { "L": 40000.0, "beta2": -2.1e-26, "gamma": 0.0013, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "fiber", "par": { "L": 10000.0, "beta2": 8.5e-26,  "gamma": 0.0025, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 10.0, "nsp": 2.5 } },
+
+    { "type": "fiber", "par": { "L": 40000.0, "beta2": -2.1e-26, "gamma": 0.0013, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "fiber", "par": { "L": 10000.0, "beta2": 8.5e-26,  "gamma": 0.0025, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 10.0, "nsp": 2.5 } },
+
+    { "type": "fiber", "par": { "L": 40000.0, "beta2": -2.1e-26, "gamma": 0.0013, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "fiber", "par": { "L": 10000.0, "beta2": 8.5e-26,  "gamma": 0.0025, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 10.0, "nsp": 2.5 } },
+
+    { "type": "fiber", "par": { "L": 40000.0, "beta2": -2.1e-26, "gamma": 0.0013, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "fiber", "par": { "L": 10000.0, "beta2": 8.5e-26,  "gamma": 0.0025, "dz": 1.0, "alpha": 4.6e-5 } }
+  ]
+}

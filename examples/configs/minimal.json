@@ -1,0 +1,9 @@
+{
+  "global": { "Rb": 3.2e10, "M": 2, "sps": 32, "Fs": 1.024e12, "Nsym": 4096, "Ptx": 0.01 },
+  "chain": [
+    { "type": "prbs",  "par": { "Nbits": 4096, "seed": 42 } },
+    { "type": "pulse", "par": { "shape": "RRC", "rolloff": 0.2, "span": 8, "sps": 32 } },
+    { "type": "fiber", "par": { "L": 40000, "beta2": -2.1e-26, "gamma": 1.3e-3, "dz": 1, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 20, "NF_dB": 5 } }
+  ]
+}
