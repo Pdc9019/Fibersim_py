@@ -57,6 +57,55 @@ def duplicate_block(idx: int):
     st.session_state.chain.insert(idx + 1, blk)
 
 
+# ------------------------- PRESETS DE EJEMPLO -------------------------
+
+PRESETS: Dict[str, Dict[str, Any]] = {
+    "Demo 400 km DCF": {
+        "global": { "project": "Enlace 400 km con DCF", "Rb": 10e9, "M": 2, "sps": 8, "Fs": 80e9, "Nsym": 32768, "Ptx": 3.162e-5, "lambda_nm": 1550 },
+        "pulse":  { "type": "RRC", "roll": 0.2, "span": 8 },
+        "chain": [
+            { "type": "fiber", "par": { "L": 66000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } },
+            { "type": "fiber", "par": { "L": 14000.0, "beta2":  1.001e-25, "gamma": 0.0020, "dz": 1000.0, "alpha": 1.151e-4 } },
+            { "type": "edfa",  "par": { "G_dB": 21.2, "nsp": 1.6 } },
+
+            { "type": "fiber", "par": { "L": 66000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } },
+            { "type": "fiber", "par": { "L": 14000.0, "beta2":  1.001e-25, "gamma": 0.0020, "dz": 1000.0, "alpha": 1.151e-4 } },
+            { "type": "edfa",  "par": { "G_dB": 21.2, "nsp": 1.6 } },
+
+            { "type": "fiber", "par": { "L": 66000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } },
+            { "type": "fiber", "par": { "L": 14000.0, "beta2":  1.001e-25, "gamma": 0.0020, "dz": 1000.0, "alpha": 1.151e-4 } },
+            { "type": "edfa",  "par": { "G_dB": 21.2, "nsp": 1.6 } },
+
+            { "type": "fiber", "par": { "L": 66000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } },
+            { "type": "fiber", "par": { "L": 14000.0, "beta2":  1.001e-25, "gamma": 0.0020, "dz": 1000.0, "alpha": 1.151e-4 } },
+            { "type": "edfa",  "par": { "G_dB": 21.2, "nsp": 1.6 } },
+
+            { "type": "fiber", "par": { "L": 66000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } },
+            { "type": "fiber", "par": { "L": 14000.0, "beta2":  1.001e-25, "gamma": 0.0020, "dz": 1000.0, "alpha": 1.151e-4 } },
+            { "type": "edfa",  "par": { "G_dB": 21.2, "nsp": 1.6 } }
+        ]
+    },
+    "Demo 80 km SMF": {
+        "global": { "project": "Enlace 80 km SMF", "Rb": 10e9, "M": 2, "sps": 8, "Fs": 80e9, "Nsym": 16384, "Ptx": 1e-3, "lambda_nm": 1550 },
+        "pulse":  { "type": "RRC", "roll": 0.25, "span": 6 },
+        "chain":  [
+            { "type": "fiber", "par": { "L": 80000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } }
+        ]
+    },
+    "Demo 3 spans SMF+EDFA": {
+        "global": { "project": "3 spans SMF+EDFA", "Rb": 10e9, "M": 2, "sps": 8, "Fs": 80e9, "Nsym": 16384, "Ptx": 1e-3, "lambda_nm": 1550 },
+        "pulse":  { "type": "RRC", "roll": 0.25, "span": 6 },
+        "chain": [
+            { "type": "fiber", "par": { "L": 50000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } },
+            { "type": "edfa",  "par": { "G_dB": 10.0, "nsp": 1.6 } },
+            { "type": "fiber", "par": { "L": 50000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } },
+            { "type": "edfa",  "par": { "G_dB": 10.0, "nsp": 1.6 } },
+            { "type": "fiber", "par": { "L": 50000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } }
+        ]
+    }
+}
+
+
 # ------------------------- página / estado -------------------------
 
 st.set_page_config(page_title="FiberSim GUI", layout="wide")
@@ -115,6 +164,7 @@ if upl:
         st.session_state["pulse"]  = cfg.pulse.model_dump()
         st.session_state.chain     = [b.model_dump() for b in cfg.chain]
         for b in st.session_state.chain: ensure_uid(b)
+        st.session_state.edit_idx = None
         st.sidebar.success("Configuración cargada ✅")
     except Exception as e:
         st.sidebar.error(f"Error al cargar: {e}")
@@ -124,6 +174,25 @@ def export_json() -> str:
     return json.dumps(data, indent=2)
 
 st.sidebar.download_button("💾 Descargar JSON", data=export_json(), file_name="config.json", mime="application/json")
+
+# ---------- sección de ejemplos ----------
+st.sidebar.markdown("---")
+st.sidebar.subheader("📁 Ejemplos")
+preset_names = list(PRESETS.keys())
+preset_sel = st.sidebar.selectbox("Elegir ejemplo", options=preset_names, index=0)
+if st.sidebar.button("Cargar ejemplo", use_container_width=True):
+    try:
+        raw = PRESETS[preset_sel]
+        # valida contra el esquema y normaliza
+        cfg = SimConfig.model_validate(raw)
+        st.session_state["global"] = cfg.global_.model_dump()
+        st.session_state["pulse"]  = cfg.pulse.model_dump()
+        st.session_state.chain     = [b.model_dump() for b in cfg.chain]
+        for b in st.session_state.chain: ensure_uid(b)
+        st.session_state.edit_idx = None
+        st.sidebar.success("Ejemplo cargado ✅")
+    except Exception as e:
+        st.sidebar.error(f"No se pudo cargar el ejemplo: {e}")
 
 
 # ------------------------- parámetros globales/pulso -------------------------
@@ -191,25 +260,25 @@ for i, blk in enumerate(st.session_state.chain):
                 f'</div>',
                 unsafe_allow_html=True
             )
-        # botones: ▲ ▼ ⧉ ✖ ⚙
+        # botones: ▲ ▼ ⧉ ✖ ⚙  (keys basadas en _uid para evitar problemas tras precarga)
         with bcol:
             xb1, xb2, xb3, xb4, xb5 = st.columns(5)
             with xb1:
-                st.button("▲", key=f"up{i}", on_click=move_block, args=(i,-1),
+                st.button("▲", key=f"up_{blk['_uid']}", on_click=move_block, args=(i,-1),
                           help="Mover arriba", use_container_width=True)
             with xb2:
-                st.button("▼", key=f"down{i}", on_click=move_block, args=(i,+1),
+                st.button("▼", key=f"down_{blk['_uid']}", on_click=move_block, args=(i,+1),
                           help="Mover abajo", use_container_width=True)
             with xb3:
-                st.button("⧉", key=f"dup{i}", on_click=duplicate_block, args=(i,),
+                st.button("⧉", key=f"dup_{blk['_uid']}", on_click=duplicate_block, args=(i,),
                           help="Duplicar", use_container_width=True)
             with xb4:
-                st.button("✖", key=f"del{i}", on_click=delete_block, args=(i,),
+                st.button("✖", key=f"del_{blk['_uid']}", on_click=delete_block, args=(i,),
                           help="Eliminar", use_container_width=True)
             with xb5:
                 def _toggle_edit(k=i):
                     st.session_state.edit_idx = (None if st.session_state.edit_idx == k else k)
-                st.button("⚙", key=f"edit{i}", on_click=_toggle_edit,
+                st.button("⚙", key=f"edit_{blk['_uid']}", on_click=_toggle_edit,
                           help="Editar", use_container_width=True)
 
         st.markdown('</div>', unsafe_allow_html=True)
@@ -272,7 +341,8 @@ with col4: do_eye       = st.checkbox("Eye Diagram final", value=True)
 
 colh1, colh2 = st.columns(2)
 with colh1: do_const3d_html = st.checkbox("3D interactivo (HTML)", value=True)
-with colh2: const3d_html_pts = st.slider("Puntos por snapshot 3D", min_value=200, max_value=600, value=400, step=50)
+# AJUSTE SOLICITADO: 100..200 puntos, default 150
+with colh2: const3d_html_pts = st.slider("Puntos por snapshot 3D", min_value=100, max_value=200, value=150, step=10)
 
 plots_dir = st.text_input("Carpeta de plots", value="plots")
 outdir    = st.text_input("Carpeta de logs", value="logs")
@@ -306,7 +376,7 @@ if st.button("▶ Ejecutar simulación", type="primary"):
                 step_const_km=float(step_const_km),
                 do_eye=bool(do_eye),
                 plots_dir=plots_dir,
-                # 3D: solo HTML desde GUI
+                # 3D: HTML desde GUI, con límite de puntos ajustado
                 do_const3d=False, const3d_every=1, const3d_pts=1000,
                 do_const3d_html=bool(do_const3d_html), const3d_html_pts=int(const3d_html_pts),
             )
