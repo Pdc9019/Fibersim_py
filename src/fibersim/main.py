@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os, json, time, pathlib, importlib, math
-from typing import Any, Dict, List
+from typing import Any, Dict
 import typer
 from rich import print as rprint
 
@@ -13,11 +13,6 @@ def _load_config(config_path: str) -> Dict[str, Any]:
     return json.loads(p.read_text(encoding="utf-8"))
 
 def _prepare_backend(use_gpu: bool):
-    """
-    Fija la variable de entorno y recarga array_api para elegir xp.
-    Luego recarga módulos que puedan haber capturado xp al importar.
-    Devuelve (xp, backend_info) y referencias a las funciones del solver.
-    """
     os.environ["FIBERSIM_GPU"] = "1" if use_gpu else "0"
 
     from .core import array_api as _array_api
@@ -31,6 +26,7 @@ def _prepare_backend(use_gpu: bool):
         "fibersim.core.plot",
         "fibersim.core.utils",
         "fibersim.core.fiber",
+        "fibersim.core.modem",
     ]
     mods = {}
     for name in mod_names:
@@ -45,8 +41,10 @@ def _prepare_backend(use_gpu: bool):
     save_power_evolution = mods["fibersim.core.plot"].save_power_evolution
     save_constellations_3d = mods["fibersim.core.plot"].save_constellations_3d
     save_constellations_3d_html = mods["fibersim.core.plot"].save_constellations_3d_html
+    modem = mods["fibersim.core.modem"]
 
     try:
+        backend_info = "CuPy"
         if getattr(xp, "__name__", "") == "cupy":
             dev_id = xp.cuda.runtime.getDevice()
             props = xp.cuda.runtime.getDeviceProperties(dev_id)
@@ -68,12 +66,10 @@ def _prepare_backend(use_gpu: bool):
         save_power_evolution,
         save_constellations_3d,
         save_constellations_3d_html,
+        modem,
     )
 
 def _to_numpy_if_needed(arr, xp):
-    """
-    Convierte a numpy si el backend es CuPy. Si ya es numpy o lista de arrays, maneja ambos casos.
-    """
     try:
         asnumpy = getattr(xp, "asnumpy", None)
         if asnumpy is None:
@@ -86,153 +82,27 @@ def _to_numpy_if_needed(arr, xp):
     except Exception:
         return arr
 
-# ------------------------- perfil analitico Potencia, OSNR, BER -------------------------
+# ------------------------- helpers métricas -------------------------
 
-_h = 6.62607015e-34
-_c = 299792458.0
+def _snr_sym_db(tx_ref_np, rx_syms_np) -> float:
+    """SNR a nivel de símbolo tras alinear fase al MMSE."""
+    import numpy as np
+    n = min(len(tx_ref_np), len(rx_syms_np))
+    if n == 0:
+        return float("nan")
+    tx = tx_ref_np[:n]
+    rx = rx_syms_np[:n]
+    num = np.vdot(tx, rx)  # conj(tx) @ rx
+    theta = float(np.angle(num))
+    rx_rot = rx * np.exp(-1j * theta)
+    err = rx_rot - tx
+    ps = float(np.mean(np.abs(tx) ** 2))
+    pn = float(np.mean(np.abs(err) ** 2))
+    if pn <= 0:
+        return float("inf")
+    return 10.0 * math.log10(ps / pn)
 
-def _W_to_dBm(p_W: float) -> float:
-    return 10.0 * math.log10(max(p_W, 1e-30) / 1e-3)
-
-def _build_power_osnr_profile(cfg: Dict[str, Any], Bo_Hz: float = 12.5e9) -> List[Dict[str, Any]]:
-    """
-    Recorre la chain aplicando atenuacion de fibra y ganancia de EDFA, acumulando ASE.
-    Devuelve lista de puntos con z_km, P_dBm y OSNR_dB cuando corresponda.
-    Usa nsp del bloque EDFA si esta presente, si no usa 2.5 por defecto.
-    """
-    g = cfg["global"]
-    chain = cfg["chain"]
-    lambda_nm = float(g.get("lambda_nm", 1550.0))
-    nu = _c / (lambda_nm * 1e-9)
-
-    z_m = 0.0
-    P_sig_W = float(g["Ptx"])
-    P_ase_W = 0.0
-
-    prof: List[Dict[str, Any]] = []
-    for i, blk in enumerate(chain):
-        t = blk["type"]
-        par = blk["par"]
-
-        if t == "fiber":
-            L = float(par["L"])
-            alpha = float(par["alpha"])  # 1/m sobre potencia
-            P_sig_W *= math.exp(-alpha * L)
-            z_m += L
-            prof.append({
-                "i": i, "kind": "fiber", "z_km": z_m/1e3,
-                "P_dBm": _W_to_dBm(P_sig_W),
-                "OSNR_dB": None if P_ase_W <= 0 else 10*math.log10(P_sig_W / max(P_ase_W, 1e-30)),
-            })
-
-        elif t == "edfa":
-            G_dB = float(par.get("G_dB", 0.0))
-            G_lin = 10.0**(G_dB/10.0)
-            nsp = float(par.get("nsp", 2.5))
-
-            # amplificacion de señal
-            P_sig_W *= G_lin
-            # ruido ASE de doble polarizacion en Bo
-            P_ase_W += 2.0 * nsp * _h * nu * (G_lin - 1.0) * Bo_Hz
-
-            prof.append({
-                "i": i, "kind": "edfa", "z_km": z_m/1e3,
-                "P_dBm": _W_to_dBm(P_sig_W),
-                "OSNR_dB": 10*math.log10(P_sig_W / max(P_ase_W, 1e-30)),
-                "G_dB": G_dB, "nsp": nsp,
-            })
-        else:
-            prof.append({
-                "i": i, "kind": t, "z_km": z_m/1e3,
-                "P_dBm": _W_to_dBm(P_sig_W),
-                "OSNR_dB": None if P_ase_W <= 0 else 10*math.log10(P_sig_W / max(P_ase_W, 1e-30)),
-            })
-    return prof
-
-def _add_ber_to_profile(profile: List[Dict[str, Any]], Rb: float, M: int) -> None:
-    """
-    Agrega BER aproximado por punto a partir de OSNR usando mapeo SNR_elec ≈ OSNR_lin*(Bo/Rb).
-    Para M distinto de 2 se usa una aproximacion burda.
-    """
-    from math import erfc, sqrt
-    Bo_Hz = 12.5e9
-    for pt in profile:
-        osnr = pt.get("OSNR_dB", None)
-        if osnr is None:
-            pt["BER"] = None
-            continue
-        OSNR_lin = 10.0**(osnr/10.0)
-        SNR_lin = OSNR_lin * (Bo_Hz / max(Rb, 1.0))
-        if M == 2:
-            BER = 0.5 * erfc(sqrt(max(SNR_lin, 1e-12))/sqrt(2.0))
-        elif M == 4:
-            BER = 0.5 * erfc(sqrt(0.5*max(SNR_lin, 1e-12)))
-        elif M == 16:
-            BER = (0.75/4.0) * erfc(sqrt(0.1*max(SNR_lin, 1e-12)))
-        else:
-            BER = 0.2 * erfc(sqrt(0.1*max(SNR_lin, 1e-12)))
-        pt["BER"] = BER
-
-def _save_profile_png(profile: List[Dict[str, Any]], out_png: pathlib.Path) -> None:
-    if not profile:
-        return
-    import matplotlib.pyplot as plt
-    z = [p["z_km"] for p in profile]
-    P = [p.get("P_dBm", None) for p in profile]
-    OSNR = [p.get("OSNR_dB", None) for p in profile]
-    BER = [p.get("BER", None) for p in profile]
-
-    fig = plt.figure(figsize=(9, 5))
-    ax1 = fig.add_subplot(111)
-    ax1.plot(z, P, label="Potencia [dBm]")
-    if any(v is not None for v in OSNR):
-        ax1.plot(z, OSNR, label="OSNR [dB]")
-    ax1.set_xlabel("Distancia [km]")
-    ax1.set_ylabel("dB / dBm")
-    ax1.grid(True, alpha=0.3)
-    ax1.legend(loc="best")
-    if any(v is not None for v in BER):
-        ax2 = ax1.twinx()
-        ax2.plot(z, [v if v is not None else float("nan") for v in BER], label="BER", linestyle="--")
-        ax2.set_yscale("log")
-        ax2.set_ylabel("BER")
-    fig.tight_layout()
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=140)
-    plt.close(fig)
-
-def _save_profile_html(profile: List[Dict[str, Any]], out_html: pathlib.Path) -> None:
-    try:
-        import plotly.graph_objs as go
-        from plotly.offline import plot
-    except Exception:
-        return  # si falta plotly, omitimos HTML
-
-    z = [p["z_km"] for p in profile]
-    P = [p.get("P_dBm", None) for p in profile]
-    OSNR = [p.get("OSNR_dB", None) for p in profile]
-    BER = [p.get("BER", None) for p in profile]
-
-    traces = [
-        go.Scatter(x=z, y=P, mode="lines+markers", name="Potencia [dBm]"),
-        go.Scatter(x=z, y=OSNR, mode="lines+markers", name="OSNR [dB]"),
-    ]
-    if any(v is not None for v in BER):
-        traces.append(go.Scatter(x=z, y=BER, mode="lines+markers", name="BER", yaxis="y2"))
-
-    layout = go.Layout(
-        title="Perfiles z",
-        xaxis=dict(title="Distancia [km]"),
-        yaxis=dict(title="dB / dBm"),
-        yaxis2=dict(title="BER", overlaying="y", side="right", type="log"),
-        legend=dict(orientation="h"),
-        template="plotly_white",
-    )
-    fig = go.Figure(data=traces, layout=layout)
-    out_html.parent.mkdir(parents=True, exist_ok=True)
-    plot(fig, filename=str(out_html), auto_open=False, include_plotlyjs="cdn")
-
-# ------------------------- ejecucion principal -------------------------
+# ------------------------- ejecución principal -------------------------
 
 def _execute(
     config: str,
@@ -247,7 +117,6 @@ def _execute(
     step_const_km: float,
     do_eye: bool,
     plots_dir: str,
-    # opciones 3D
     do_const3d: bool,
     const3d_every: int,
     const3d_pts: int,
@@ -265,6 +134,7 @@ def _execute(
         save_power_evolution,
         save_constellations_3d,
         save_constellations_3d_html,
+        modem,
     ) = _prepare_backend(gpu)
 
     cfg = _load_config(config)
@@ -272,13 +142,10 @@ def _execute(
     chain = cfg["chain"]
     pulse_par = cfg["pulse"]
 
-    # ---------- TX ----------
+    # TX
     info: Dict[str, Any] = {}
     bits, info = prbs_gen(parGlob["Nsym"], parGlob["M"], info)
     syms = (1 - 2 * bits.astype(xp.int8)).astype(xp.complex128)
-
-    import numpy as _np
-    syms_tx_cpu = _to_numpy_if_needed(syms, xp)
 
     pulse_par = dict(pulse_par)
     pulse_par["Rb"] = parGlob["Rb"]
@@ -287,7 +154,7 @@ def _execute(
     txSig, info = pulse_shaper(syms, info, pulse_par)
     Ein = xp.sqrt(parGlob["Ptx"]) * txSig
 
-    # ---------- Cadena ----------
+    # Cadena
     t0 = time.time()
     Aout, info, diag = run_chain(
         Ein,
@@ -304,45 +171,76 @@ def _execute(
     )
     elapsed = time.time() - t0
 
-    # ---------- BER BPSK robusto ----------
-    ber_est = None
-    try:
-        sps = int(diag.get("sps", int(parGlob["sps"])))
-        delay_tx = int(diag.get("delay_samp", 0))
-        from .core.utils import get_rx_filter
-        roll = float(pulse_par.get("roll", 0.1))
-        span = int(pulse_par.get("span", 10))
-        rx_filt = get_rx_filter(sps=sps, roll=roll, span=span)
-
-        y = rx_filt(Aout)
-        y_np = _to_numpy_if_needed(y, xp)
-
-        h_len = span * sps + 1
-        rx_gd = (h_len - 1) // 2
-
-        start = max(0, delay_tx + rx_gd)
-        n_avail = max(0, len(y_np) - start)
-        Nsym = int(parGlob["Nsym"])
-        n_syms = max(0, min(Nsym, n_avail // sps))
-
-        y_s = y_np[start : start + n_syms * sps : sps]
-        s_tx = syms_tx_cpu[:n_syms]
-
-        if n_syms > 0:
-            s_hat = _np.where(y_s.real >= 0, 1.0, -1.0).astype(_np.complex128)
-            b_tx = (s_tx.real < 0).astype(_np.uint8)
-            b_rx = (s_hat.real < 0).astype(_np.uint8)
-            n = min(len(b_tx), len(b_rx))
-            ber_est = float(_np.mean(b_tx[:n] ^ b_rx[:n]))
-    except Exception:
-        ber_est = None
-
-    # ---------- Logs + Plots ----------
+    # Rutas de salida
     outdir_p = pathlib.Path(outdir); outdir_p.mkdir(parents=True, exist_ok=True)
     plots_p = pathlib.Path(plots_dir); plots_p.mkdir(parents=True, exist_ok=True)
     log_name = f"simlog_{time.strftime('%Y-%m-%d_%H-%M-%S')}.json"
 
-    # Plots existentes
+    # ---------------- BER y SNR con búsqueda de retardo ----------------
+    sps = int(diag.get("sps", parGlob["sps"]))
+    span = int(pulse_par.get("span", 8))
+    delay_guess = int(diag.get("delay_samp", (span * sps) // 2))
+
+    Aout_np = _to_numpy_if_needed(Aout, xp)
+    syms_np = _to_numpy_if_needed(syms, xp)
+    Nsym = int(parGlob["Nsym"])
+
+    best_delay, ber_est, s_hat = modem.find_best_delay(
+        rx_wave=Aout_np,
+        sps=sps,
+        tx_syms_ref=syms_np[:Nsym],
+        guess_delay=delay_guess,
+        halfwin=max(8, sps * 2),
+    )
+    delay_total = int(best_delay)
+
+    # SNR a nivel de símbolo siempre disponible
+    try:
+        snr_sym_db = _snr_sym_db(syms_np[:Nsym], s_hat)
+    except Exception:
+        snr_sym_db = float("nan")
+
+    # OSNR final si el core dejó perfil osnrZ_dB
+    osnr_final_db = None
+    try:
+        osnrZ = diag.get("osnrZ_dB", None)
+        if osnrZ and len(osnrZ) > 0:
+            # tomar último finito
+            for v in reversed(osnrZ):
+                if v is not None:
+                    osnr_final_db = float(v)
+                    break
+    except Exception:
+        osnr_final_db = None
+
+    # Pout dBm si vino Pmean
+    pout_dbm = None
+    if "Pmean" in info:
+        try:
+            pout_dbm = 10.0 * math.log10(max(float(info["Pmean"]), 1e-30) / 1e-3)
+        except Exception:
+            pout_dbm = None
+
+    result = {
+        "status": "ok",
+        "notes": "RRC+SSFM; snapshots guardados si do_const=True",
+        "Lcum_m": info.get("Lcum", 0.0),
+        "G_dB": info.get("G_dB", 0.0),
+        "Pmean_W": info.get("Pmean", None),
+        "backend": backend_info,
+        "elapsed_s": elapsed,
+        "delay_guess_samp": delay_guess,
+        "delay_best_samp": delay_total,
+        "BER_est_BPSK": ber_est,
+        "SNR_sym_dB": snr_sym_db,
+        "OSNR_final_dB": osnr_final_db,
+        "Pout_dBm": pout_dbm,
+    }
+
+    from .io import write_simlog
+    write_simlog(outdir_p / log_name, cfg, result, elapsed)
+
+    # Plots
     if do_const and len(diag.get("consSym", [])) > 0:
         consSym_np = _to_numpy_if_needed(diag["consSym"], xp)
         consZ_np = _to_numpy_if_needed(diag["consZ_m"], xp)
@@ -366,45 +264,14 @@ def _execute(
             )
 
     if do_eye:
-        Aout_np = _to_numpy_if_needed(Aout, xp)
-        save_eyediagram(Aout_np, diag["sps"], diag["delay_samp"], plots_p / "eye.png")
-
-    # Perfil analitico y escritura de archivos que la GUI ya espera
-    profile = _build_power_osnr_profile(cfg, Bo_Hz=12.5e9)
-    _add_ber_to_profile(profile, Rb=float(parGlob["Rb"]), M=int(parGlob.get("M", 2)))
-    _save_profile_html(profile, plots_p / "perfil.html")
-    _save_profile_png(profile, plots_p / "perfil.png")
-
-    # Resultado
-    last_osnr = None
-    for pt in reversed(profile):
-        if pt.get("OSNR_dB", None) is not None:
-            last_osnr = pt["OSNR_dB"]
-            break
-
-    result = {
-        "status": "ok",
-        "notes": "RRC+SSFM; snapshots si do_const=True; perfil analitico guardado",
-        "Lcum_m": info.get("Lcum", 0.0),
-        "G_dB": info.get("G_dB", 0.0),
-        "Pmean_W": info.get("Pmean", None),
-        "backend": backend_info,
-        "elapsed_s": elapsed,
-        "BER_est_BPSK": ber_est,
-        "OSNR_final_dB": last_osnr,
-        "Pout_dBm": profile[-1]["P_dBm"] if profile else None,
-    }
-
-    from .io import write_simlog
-    write_simlog(outdir_p / log_name, cfg, result, elapsed)
+        save_eyediagram(Aout_np, sps, delay_total, plots_p / "eye.png")
 
     rprint(f"[bold cyan]{backend_info}[/bold cyan]")
-    rprint(f"[bold green]Listo[/bold green]: log en [cyan]{outdir}/{log_name}[/cyan], plots en [cyan]{plots_dir}[/cyan].")
-    if ber_est is not None:
-        rprint(f"BER BPSK estimado = {ber_est:.3e}")
-    if last_osnr is not None:
-        rprint(f"OSNR final analitico = {last_osnr:.2f} dB")
-    rprint(f"L = {result['Lcum_m']/1e3:.1f} km | G = {result['G_dB']:.1f} dB | elapsed = {elapsed:.3f} s")
+    rprint(f"[bold green]Listo[/bold green]: log en [cyan]{outdir}/{log_name}[/cyan], "
+           f"plots en [cyan]{plots_dir}[/cyan].")
+    rprint(f"L = {result['Lcum_m']/1e3:.1f} km | G = {result['G_dB']:.1f} dB | elapsed = {elapsed:.3f} s "
+           f"| BER={ber_est:.3e} | SNRsym={snr_sym_db:.2f} dB"
+           + (f" | OSNR={osnr_final_db:.2f} dB" if osnr_final_db is not None else ""))
 
     return backend_info
 
@@ -426,9 +293,9 @@ def run(
     plots_dir: str = typer.Option("plots", help="Carpeta para imágenes."),
     do_const3d: bool = typer.Option(False, help="Guardar PNG 3D con matplotlib."),
     const3d_every: int = typer.Option(1, help="Usar 1 de cada N snapshots en 3D PNG."),
-    const3d_pts: int = typer.Option(1000, help="Máx. puntos por snapshot para 3D PNG."),
+    const3d_pts: int = typer.Option(1000, help="Máx. puntos por snapshot para PNG 3D."),
     do_const3d_html: bool = typer.Option(True, help="Guardar 3D interactivo HTML con Plotly."),
-    const3d_html_pts: int = typer.Option(1200, help="Máx. puntos por snapshot para 3D HTML."),
+    const3d_html_pts: int = typer.Option(1200, help="Máx. puntos por snapshot para HTML 3D."),
 ):
     _execute(
         config=config,

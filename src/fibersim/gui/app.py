@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 import streamlit as st
 import streamlit.components.v1 as components
 
-# Modelos y ejecución
+# Modelos / ejecución del simulador
 from fibersim.schema import SimConfig, FiberBlock, EdfaBlock, FiberPar, EdfaPar
 from fibersim.main import _execute
 
@@ -52,6 +52,12 @@ def duplicate_block(idx: int):
     blk["_uid"] = uuid.uuid4().hex
     st.session_state.chain.insert(idx + 1, blk)
 
+def w_to_dbm(p_w: float) -> float:
+    return 10.0 * math.log10(max(p_w, 1e-30) / 1e-3)
+
+def dbm_to_w(dbm: float) -> float:
+    return 1e-3 * (10.0 ** (dbm / 10.0))
+
 # ------------------------- presets -------------------------
 
 PRESETS: Dict[str, Dict[str, Any]] = {
@@ -97,10 +103,46 @@ PRESETS: Dict[str, Dict[str, Any]] = {
             { "type": "edfa",  "par": { "G_dB": 10.0, "nsp": 1.6 } },
             { "type": "fiber", "par": { "L": 50000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } }
         ]
+    },
+    "Corning SMF-28e+": {
+        "global": { 
+            "project": "Enlace SMF-28e+ 100km", 
+            "Rb": 10e9, 
+            "M": 2, 
+            "sps": 8, 
+            "Fs": 80e9, 
+            "Nsym": 16384, 
+            "Ptx": 1e-3, 
+            "lambda_nm": 1550 
+        },
+        "pulse": { 
+            "type": "RRC", 
+            "roll": 0.25, 
+            "span": 6 
+        },
+        "chain": [
+            { 
+                "type": "fiber", 
+                "par": { 
+                    "L": 100000.0,           # 100 km
+                    "beta2": -2.17e-26,      # Dispersión típica ~17 ps/nm/km
+                    "gamma": 0.00107,        # Coeficiente no lineal típico
+                    "dz": 1000.0,
+                    "alpha": 4.343e-5        # Atenuación ~0.19 dB/km
+                } 
+            },
+            {
+                "type": "edfa",
+                "par": {
+                    "G_dB": 19.0,           # Compensación de pérdidas
+                    "nsp": 1.5              # Figure de ruido típica
+                }
+            }
+        ]
     }
 }
 
-# ------------------------- página y estado -------------------------
+# ------------------------- página / estado -------------------------
 
 st.set_page_config(page_title="FiberSim GUI", layout="wide")
 
@@ -117,21 +159,28 @@ div.block-container { padding-top: 1.0rem; }
 .chip.fiber { background:#1e3a8a22; color:#93c5fd; border:1px solid #1e3a8a44; }
 .chip.edfa  { background:#14532d22; color:#86efac; border:1px solid #14532d44; }
 div[data-testid="stHorizontalBlock"] { gap:.25rem; }
+
+/* Chips de meta (backend/SNR/OSNR/BER) */
+.meta-row {font-size:0.90rem; opacity:.95; display:flex; gap:.6rem; flex-wrap:wrap; margin:.35rem 0 0.4rem 0;}
+.meta-chip{padding:.15rem .5rem; border:1px solid rgba(255,255,255,.25); border-radius:8px; background:rgba(255,255,255,.04)}
 </style>
 """, unsafe_allow_html=True)
 
+# Estado inicial
 if "chain" not in st.session_state:
     st.session_state.chain: List[dict] = []
 if "global" not in st.session_state:
-    st.session_state["global"] = dict(Rb=32e9, M=2, sps=32, Fs=1.024e12, Nsym=4096, Ptx=1e-2, lambda_nm=1550)
+    st.session_state["global"] = dict(Rb=10e9, M=2, sps=8, Fs=80e9, Nsym=16384, Ptx=1e-3, lambda_nm=1550.0)
 if "pulse" not in st.session_state:
-    st.session_state["pulse"] = dict(type="RRC", roll=0.1, span=10)
+    st.session_state["pulse"] = dict(type="RRC", roll=0.2, span=8)
 if "edit_idx" not in st.session_state:
     st.session_state.edit_idx: int | None = None
+if "last_backend" not in st.session_state:
+    st.session_state["last_backend"] = None
 
-# ------------------------- carga, guardado y presets -------------------------
+# ------------------------- carga / guardado y presets -------------------------
 
-st.sidebar.header("⚙️ Configuración")
+st.sidebar.header("Configuración")
 upl = st.sidebar.file_uploader("Cargar JSON", type=["json"])
 if upl:
     try:
@@ -149,10 +198,10 @@ def export_json() -> str:
     data = {"global": st.session_state["global"], "pulse": st.session_state["pulse"], "chain": st.session_state.chain}
     return json.dumps(data, indent=2)
 
-st.sidebar.download_button("💾 Descargar JSON", data=export_json(), file_name="config.json", mime="application/json")
+st.sidebar.download_button("Descargar JSON", data=export_json(), file_name="config.json", mime="application/json")
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📁 Ejemplos")
+st.sidebar.subheader("Ejemplos")
 preset_sel = st.sidebar.selectbox("Elegir ejemplo", options=list(PRESETS.keys()), index=0)
 if st.sidebar.button("Cargar ejemplo", use_container_width=True):
     try:
@@ -167,42 +216,72 @@ if st.sidebar.button("Cargar ejemplo", use_container_width=True):
     except Exception as e:
         st.sidebar.error(f"No se pudo cargar: {e}")
 
-# ------------------------- parámetros globales y pulso -------------------------
+# ------------------------- parámetros simples y robustos -------------------------
 
 st.title("FiberSim - Construcción de enlace")
 
 gcol, pcol = st.columns(2)
+
 with gcol:
-    st.subheader("Parámetros Globales")
+    st.subheader("Parámetros globales")
+
     g = st.session_state["global"]
-    g["Rb"]   = st.number_input("Rb [baud]", value=float(g["Rb"]), min_value=1e6, step=1e6, format="%.0f")
-    g["M"]    = st.number_input("Orden M", value=int(g["M"]), min_value=2, step=1)
-    g["sps"]  = st.number_input("muestras por símbolo (sps)", value=int(g["sps"]), min_value=2, step=1)
-    g["Fs"]   = st.number_input("Fs [Hz]", value=float(g["Fs"]), min_value=1e6, step=1e6, format="%.0f")
-    g["Nsym"] = st.number_input("N símbolos", value=int(g["Nsym"]), min_value=64, step=64)
-    g["Ptx"]  = st.number_input("Potencia Tx [W]", value=float(g["Ptx"]), min_value=1e-9, format="%.6f")
-    g["lambda_nm"] = st.number_input("Longitud de onda [nm]", value=float(g.get("lambda_nm", 1550.0)), min_value=1200.0, max_value=1650.0, step=1.0)
+
+    # Entrada en Gbaud para evitar números enormes y minimizar errores
+    Rb_gbaud = st.number_input("Rb [Gbaud]", value=float(g["Rb"]) / 1e9, min_value=0.1, step=0.1, format="%.2f")
+    # Potencia en dBm, convertimos internamente a W
+    pt_dbm_default = w_to_dbm(float(g["Ptx"]))
+    Ptx_dBm = st.number_input("Potencia Tx [dBm]", value=float(pt_dbm_default), step=0.1, format="%.2f")
+
+    # Calidad controla Nsym. sps se fija a 8 en modo simple.
+    calidad = st.selectbox("Calidad de simulación", ["Rápida", "Media", "Alta"], index=1,
+                           help="Ajusta Nsym. Rápida=8192, Media=16384, Alta=32768")
+
+    # Avanzado opcional
+    with st.expander("Opciones avanzadas"):
+        sps_adv = st.number_input("sps", value=int(g.get("sps", 8)), min_value=2, step=1)
+        nsym_adv = st.number_input("N símbolos", value=int(g.get("Nsym", 16384)), min_value=1024, step=1024)
+        lambda_nm = st.number_input("Longitud de onda [nm]", value=float(g.get("lambda_nm", 1550.0)),
+                                    min_value=1200.0, max_value=1650.0, step=1.0)
+        usar_avanzado = st.checkbox("Usar estos valores avanzados", value=False)
+
+    # Aplicar reglas robustas
+    if usar_avanzado:
+        g["sps"] = int(max(2, sps_adv))
+        g["Nsym"] = int(nsym_adv)
+        g["lambda_nm"] = float(lambda_nm)
+    else:
+        g["sps"] = 8
+        g["Nsym"] = {"Rápida": 8192, "Media": 16384, "Alta": 32768}[calidad]
+        g["lambda_nm"] = float(g.get("lambda_nm", 1550.0))
+
+    g["Rb"] = float(Rb_gbaud) * 1e9
+    g["M"] = 2  # BPSK por ahora
+    g["Fs"] = float(g["Rb"]) * int(g["sps"])
+    g["Ptx"] = float(dbm_to_w(Ptx_dBm))
+
+    st.caption(f"Fs derivada: {g['Fs']/1e9:.3f} GHz   |   Ptx: {Ptx_dBm:.2f} dBm")
 
 with pcol:
-    st.subheader("Pulso (Tx/Rx)")
+    st.subheader("Pulso")
     p = st.session_state["pulse"]
-    p["type"] = st.selectbox("Tipo", ["RRC"], index=0)
-    p["roll"] = st.number_input("roll-off", value=float(p["roll"]), min_value=0.01, max_value=1.0, step=0.01)
-    p["span"] = st.number_input("span (símbolos)", value=int(p["span"]), min_value=1, step=1)
+    p["type"] = "RRC"
+    p["roll"] = st.slider("roll-off", min_value=0.05, max_value=0.50, value=float(p.get("roll", 0.2)), step=0.01)
+    p["span"] = st.slider("span [símbolos]", min_value=4, max_value=12, value=int(p.get("span", 8)), step=1)
 
-# ------------------------- cadena -------------------------
+# ------------------------- cadena (builder) -------------------------
 
 st.divider()
 st.subheader("Cadena de bloques")
 
 c1, c2, c3 = st.columns([1,1,2])
 with c1:
-    if st.button("➕ Añadir FIBER", use_container_width=True):
+    if st.button("Añadir FIBER", use_container_width=True):
         blk = FiberBlock(type="fiber",
                          par=FiberPar(L=40e3, beta2=-2.1e-26, gamma=1.3e-3, dz=1.0, alpha=4.6e-5)).model_dump()
         ensure_uid(blk); st.session_state.chain.append(blk)
 with c2:
-    if st.button("➕ Añadir EDFA", use_container_width=True):
+    if st.button("Añadir EDFA", use_container_width=True):
         blk = EdfaBlock(type="edfa", par=EdfaPar(G_dB=10.0, nsp=2.5)).model_dump()
         ensure_uid(blk); st.session_state.chain.append(blk)
 with c3:
@@ -225,22 +304,23 @@ for i, blk in enumerate(st.session_state.chain):
                 f'  <span class="mini-idx">{i+1}</span>'
                 f'  <span class="chip {badge_cls}">{title}</span>'
                 f'  <span class="mini-sub">{subtitle}</span>'
-                f'</div>', unsafe_allow_html=True
+                f'</div>',
+                unsafe_allow_html=True
             )
         with bcol:
             xb1, xb2, xb3, xb4, xb5 = st.columns(5)
             with xb1:
-                st.button("▲", key=f"up_{blk['_uid']}", on_click=move_block, args=(i,-1), help="Mover arriba", use_container_width=True)
+                st.button("▲", key=f"up_{blk['_uid']}", on_click=move_block, args=(i,-1), use_container_width=True)
             with xb2:
-                st.button("▼", key=f"down_{blk['_uid']}", on_click=move_block, args=(i,+1), help="Mover abajo", use_container_width=True)
+                st.button("▼", key=f"down_{blk['_uid']}", on_click=move_block, args=(i,+1), use_container_width=True)
             with xb3:
-                st.button("⧉", key=f"dup_{blk['_uid']}", on_click=duplicate_block, args=(i,), help="Duplicar", use_container_width=True)
+                st.button("⧉", key=f"dup_{blk['_uid']}", on_click=duplicate_block, args=(i,), use_container_width=True)
             with xb4:
-                st.button("✖", key=f"del_{blk['_uid']}", on_click=delete_block, args=(i,), help="Eliminar", use_container_width=True)
+                st.button("✖", key=f"del_{blk['_uid']}", on_click=delete_block, args=(i,), use_container_width=True)
             with xb5:
                 def _toggle_edit(k=i):
                     st.session_state.edit_idx = (None if st.session_state.edit_idx == k else k)
-                st.button("⚙", key=f"edit_{blk['_uid']}", on_click=_toggle_edit, help="Editar", use_container_width=True)
+                st.button("⚙", key=f"edit_{blk['_uid']}", on_click=_toggle_edit, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
 total_m = sum(b["par"]["L"] for b in st.session_state.chain if b["type"] == "fiber")
@@ -254,24 +334,24 @@ if ei is not None and 0 <= ei < len(st.session_state.chain):
     st.subheader(f"Editar bloque #{ei+1} - {'FIBER' if blk['type']=='fiber' else 'EDFA'}")
 
     move_to = st.number_input("Mover a posición", min_value=1, max_value=len(st.session_state.chain), value=ei+1, step=1)
-    cpos1, cpos2 = st.columns([0.2, 0.8])
+    cpos1, _ = st.columns([0.2, 0.8])
     with cpos1:
         if st.button("Mover", use_container_width=True):
             move_block_to(ei, int(move_to))
             st.session_state.edit_idx = int(move_to) - 1
             st.rerun()
 
-    st.markdown("### Parámetros")
+    st.markdown("Parámetros")
     if blk["type"] == "fiber":
         par = blk["par"]
         par["L"]     = st.number_input("L [m]", value=float(par["L"]), min_value=1.0, step=100.0, key=f"L_{blk['_uid']}")
-        par["beta2"] = st.number_input("β2 [s²/m]", value=float(par["beta2"]), step=1e-27, format="%.2e", key=f"b2_{blk['_uid']}")
+        par["beta2"] = st.number_input("β2 [s^2/m]", value=float(par["beta2"]), step=1e-27, format="%.2e", key=f"b2_{blk['_uid']}")
         par["gamma"] = st.number_input("γ [1/(W·m)]", value=float(par["gamma"]), min_value=1e-6, step=1e-4, format="%.4f", key=f"gm_{blk['_uid']}")
         par["dz"]    = st.number_input("dz [m]", value=float(par["dz"]), min_value=0.1, step=0.1, key=f"dz_{blk['_uid']}")
         par["alpha"] = st.number_input("α [1/m]", value=float(par["alpha"]), min_value=0.0, step=1e-6, format="%.6e", key=f"al_{blk['_uid']}")
     else:
         par = blk["par"]
-        par["G_dB"]  = st.number_input("Ganancia [dB]", value=float(par["G_dB"]), step=0.1, key=f"G_{blk['_uid']}")
+        par["G_dB"]  = st.number_input("Ganancia [dB]", value=float(par["G_d_B"] if "G_d_B" in par else par["G_dB"]), step=0.1, key=f"G_{blk['_uid']}")
         par["nsp"]   = st.number_input("nsp", value=float(par["nsp"]), min_value=0.5, step=0.1, key=f"nsp_{blk['_uid']}")
 
     if st.button("Cerrar edición", use_container_width=False):
@@ -284,7 +364,7 @@ st.divider()
 st.subheader("Ejecución")
 
 colA, colB, colC = st.columns(3)
-with colA: gpu = st.toggle("Usar GPU (CuPy)", value=True)
+with colA: gpu = st.toggle("Usar GPU CuPy", value=True)
 with colB: dz_override = st.number_input("Override dz global [m] (opcional)", value=10.0, min_value=0.1, step=0.1)
 with colC: step_const_km = st.number_input("Paso constelación [km]", value=5.0, min_value=0.5, step=0.5)
 
@@ -295,13 +375,13 @@ with col3: do_const     = st.checkbox("Constelaciones", value=True)
 with col4: do_eye       = st.checkbox("Eye final", value=True)
 
 colh1, colh2 = st.columns(2)
-with colh1: do_const3d_html = st.checkbox("3D interactivo (HTML)", value=True)
+with colh1: do_const3d_html = st.checkbox("3D interactivo HTML", value=True)
 with colh2: const3d_html_pts = st.slider("Puntos por snapshot 3D", min_value=100, max_value=200, value=150, step=10)
 
 plots_dir = st.text_input("Carpeta de plots", value="plots")
 outdir    = st.text_input("Carpeta de logs", value="logs")
 
-if st.button("▶ Ejecutar simulación", type="primary"):
+if st.button("Ejecutar simulación", type="primary"):
     try:
         cfg_dict = {
             "global": st.session_state["global"],
@@ -317,7 +397,7 @@ if st.button("▶ Ejecutar simulación", type="primary"):
         tmp.write_text(json.dumps(cfg_norm, indent=2), encoding="utf-8")
 
         try:
-            _execute(
+            backend_info = _execute(
                 config=str(tmp),
                 outdir=outdir,
                 gpu=bool(gpu),
@@ -333,12 +413,13 @@ if st.button("▶ Ejecutar simulación", type="primary"):
                 do_const3d=False, const3d_every=1, const3d_pts=1000,
                 do_const3d_html=bool(do_const3d_html), const3d_html_pts=int(const3d_html_pts),
             )
+            st.session_state["last_backend"] = backend_info
             st.success("Simulación terminada")
         except Exception as e:
             st.error("Fallo durante la simulación")
             st.exception(e)
 
-# ------------------------- helpers de resultados -------------------------
+# ------------------------- resumen y resultados -------------------------
 
 def _read_last_log(outdir: str) -> Dict[str, Any] | None:
     p = pathlib.Path(outdir)
@@ -380,22 +461,14 @@ def build_profile_from_state(Bo_Hz: float = 12.5e9) -> List[Dict[str, Any]]:
         else:
             prof.append({"i": i, "kind": t, "z_km": z_m/1e3, "P_dBm": _W_to_dBm(P_sig_W),
                          "OSNR_dB": None if P_ase_W <= 0 else 10*math.log10(P_sig_W/max(P_ase_W,1e-30))})
-    # BER aprox por punto
+    # BER aproximada por punto (BPSK)
     from math import erfc, sqrt
-    Rb = float(g["Rb"]); M = int(g.get("M", 2))
+    Rb = float(g["Rb"])
     for pt in prof:
         osnr = pt.get("OSNR_dB", None)
-        if osnr is None:
-            pt["BER"] = None; continue
+        if osnr is None: pt["BER"] = None; continue
         OSNR_lin = 10.0**(osnr/10.0); SNR_lin = OSNR_lin * (Bo_Hz / max(Rb, 1.0))
-        if M == 2:
-            pt["BER"] = 0.5 * erfc(sqrt(max(SNR_lin,1e-12))/sqrt(2.0))
-        elif M == 4:
-            pt["BER"] = 0.5 * erfc(sqrt(0.5*max(SNR_lin,1e-12)))
-        elif M == 16:
-            pt["BER"] = (0.75/4.0) * erfc(sqrt(0.1*max(SNR_lin,1e-12)))
-        else:
-            pt["BER"] = 0.2 * erfc(sqrt(0.1*max(SNR_lin,1e-12)))
+        pt["BER"] = 0.5 * erfc(sqrt(max(SNR_lin,1e-12))/sqrt(2.0))
     return prof
 
 def _profile_to_csv_bytes(profile: List[Dict[str, Any]]) -> bytes:
@@ -408,8 +481,6 @@ def _profile_to_csv_bytes(profile: List[Dict[str, Any]]) -> bytes:
                     p.get("OSNR_dB"), p.get("BER"), p.get("G_dB"), p.get("nsp")])
     return buf.getvalue().encode("utf-8")
 
-# ------------------------- resultados -------------------------
-
 plots_p = pathlib.Path(plots_dir)
 png1 = plots_p / "constelaciones.png"
 png2 = plots_p / "potencia.png"
@@ -418,30 +489,64 @@ eye  = plots_p / "eye.png"
 st.divider()
 st.subheader("Resultados")
 
-# resumen desde el último log
+# ---------- Resumen superior (chips + métricas) ----------
 log = _read_last_log(outdir)
+res = (log or {}).get("result", {}) if log else {}
+
+# Meta chips (texto más chico, con wrap)
+chips = []
+bk = st.session_state.get("last_backend") or res.get("backend")
+if bk: chips.append(f"<span class='meta-chip'>Backend: {bk}</span>")
+ber = res.get("BER_est_BPSK", None)
+if ber is not None: 
+    ber_percent = ber * 100  # Convertir a porcentaje
+    chips.append(f"<span class='meta-chip'>BER: {ber_percent:.4f}%</span>")
+snr = res.get("SNR_sym_dB", None)
+if snr is not None: chips.append(f"<span class='meta-chip'>SNR símbolo: {snr:.2f} dB</span>")
+osnr = res.get("OSNR_final_dB", None)
+if osnr is not None: chips.append(f"<span class='meta-chip'>OSNR final: {osnr:.2f} dB</span>")
+if chips:
+    st.markdown("<div class='meta-row'>" + "".join(chips) + "</div>", unsafe_allow_html=True)
+
 with st.expander("Resumen de la última ejecución", expanded=True):
     if log:
-        res = log.get("result", {})
         cols = st.columns(5)
-        cols[0].metric("Backend", res.get("backend", ""))
+
+        # Backend abreviado para que no se corte
+        bk_full = res.get("backend", "")
+        if "CuPy" in bk_full:
+            bk_short = "GPU CuPy"
+        elif "NumPy" in bk_full:
+            bk_short = "CPU NumPy"
+        else:
+            bk_short = bk_full[:16] + ("…" if len(bk_full) > 16 else "")
+
+        cols[0].metric("Backend", bk_short)
         cols[1].metric("Tiempo [s]", f"{res.get('elapsed_s', 0):.3f}")
+
+        # OSNR si existe; si no, mostrar SNR símbolo
         osnr = res.get("OSNR_final_dB", None)
-        cols[2].metric("OSNR final [dB]", f"{osnr:.2f}" if osnr is not None else "n/a")
+        snr  = res.get("SNR_sym_dB", None)
+        if osnr is not None:
+            cols[2].metric("OSNR final [dB]", f"{osnr:.2f}")
+        elif snr is not None:
+            cols[2].metric("SNR símbolo [dB]", f"{snr:.2f}")
+        else:
+            cols[2].metric("OSNR/SNR", "n/a")
+
         pout = res.get("Pout_dBm", None)
         cols[3].metric("Pout [dBm]", f"{pout:.2f}" if pout is not None else "n/a")
-        ber = res.get("BER_est_BPSK", None)
+        ber  = res.get("BER_est_BPSK", None)
         cols[4].metric("BER BPSK", f"{ber:.3e}" if ber is not None else "n/a")
     else:
         st.info("Aún no hay logs en la carpeta seleccionada.")
 
-# 3D interactivo generado por main
+# 3D interactivo (HTML) y PNGs existentes
 cands = sorted(plots_p.glob("constelaciones_3d*.html"), key=lambda p: p.stat().st_mtime, reverse=True)
 if cands:
     html = cands[0].read_text(encoding="utf-8")
     components.html(html, height=800, scrolling=False)
 
-# figuras existentes
 cols = st.columns(3)
 with cols[0]:
     if png1.exists(): st.image(str(png1), caption="Constelaciones (grid)")
@@ -450,21 +555,17 @@ with cols[1]:
 with cols[2]:
     if eye.exists():  st.image(str(eye), caption="Eye Diagram")
 
-# ------------------------- perfiles z interactivos en GUI -------------------------
-
+# Perfiles z en GUI
 st.divider()
 st.subheader("Perfiles z - analítico en GUI")
-
 pc1, pc2, pc3, pc4 = st.columns(4)
 with pc1: show_P = st.checkbox("Potencia [dBm]", value=True)
 with pc2: show_O = st.checkbox("OSNR [dB]", value=True)
 with pc3: show_B = st.checkbox("BER", value=True)
-with pc4:
-    Bo_GHz = st.number_input("Bo [GHz] para OSNR", value=12.5, min_value=0.1, max_value=100.0, step=0.1)
+with pc4: Bo_GHz = st.number_input("Bo [GHz] para OSNR", value=12.5, min_value=0.1, max_value=100.0, step=0.1)
 
 profile = build_profile_from_state(Bo_Hz=float(Bo_GHz)*1e9)
 
-# plot interactivo con plotly si está disponible
 try:
     import plotly.graph_objs as go
     traces = []
@@ -473,11 +574,10 @@ try:
         traces.append(go.Scatter(x=z, y=[p.get("P_dBm") for p in profile], mode="lines+markers", name="Potencia [dBm]"))
     if show_O:
         traces.append(go.Scatter(x=z, y=[p.get("OSNR_dB") for p in profile], mode="lines+markers", name="OSNR [dB]"))
-    sec_axis = show_B
     layout = go.Layout(
         xaxis=dict(title="Distancia [km]"),
         yaxis=dict(title="dB / dBm"),
-        yaxis2=dict(title="BER", overlaying="y", side="right", type="log") if sec_axis else None,
+        yaxis2=dict(title="BER", overlaying="y", side="right", type="log") if show_B else None,
         legend=dict(orientation="h"),
         template="plotly_white",
         title="Perfiles z",
@@ -487,14 +587,15 @@ try:
         fig.add_trace(go.Scatter(x=z, y=[p.get("BER") for p in profile], mode="lines+markers", name="BER", yaxis="y2"))
     st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
 except Exception:
-    # fallback simple
     st.line_chart({"z_km": [p["z_km"] for p in profile],
                    "P_dBm": [p.get("P_dBm") for p in profile]})
 
-# descargas del perfil
 col_dl1, col_dl2 = st.columns(2)
 with col_dl1:
-    st.download_button("⬇️ Descargar perfil CSV", data=_profile_to_csv_bytes(profile), file_name="perfil.csv", mime="text/csv")
+    st.download_button("Descargar perfil CSV",
+                       data=_profile_to_csv_bytes(profile),
+                       file_name="perfil.csv", mime="text/csv")
 with col_dl2:
-    st.download_button("⬇️ Descargar perfil JSON", data=json.dumps(profile, indent=2).encode("utf-8"),
+    st.download_button("Descargar perfil JSON",
+                       data=json.dumps(profile, indent=2).encode("utf-8"),
                        file_name="perfil.json", mime="application/json")

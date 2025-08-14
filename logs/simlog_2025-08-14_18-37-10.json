@@ -1,0 +1,42 @@
+{
+  "date": "14-Aug-2025 18:37:10",
+  "elapsed_s": 144.27913331985474,
+  "global": {
+    "Rb": 10000000000.0,
+    "M": 2,
+    "sps": 8,
+    "Fs": 80000000000.0,
+    "Nsym": 16384,
+    "Ptx": 0.001
+  },
+  "pulse": {
+    "type": "RRC",
+    "roll": 0.25,
+    "span": 6
+  },
+  "chain": [
+    {
+      "type": "fiber",
+      "par": {
+        "L": 80000.0,
+        "beta2": -2.127e-26,
+        "gamma": 0.0013,
+        "dz": 1000.0,
+        "alpha": 4.605e-05
+      }
+    }
+  ],
+  "result": {
+    "status": "ok",
+    "notes": "RRC+SSFM; snapshots guardados si do_const=True",
+    "Lcum_m": 80000.0,
+    "G_dB": 0.0,
+    "Pmean_W": 2.4919474136526496e-06,
+    "backend": "CPU NumPy",
+    "elapsed_s": 144.27913331985474,
+    "delay_guess_samp": 48,
+    "delay_best_samp": 63,
+    "BER_est_BPSK": 6.103515625e-05,
+    "Pout_dBm": -26.034611266201896
+  }
+}

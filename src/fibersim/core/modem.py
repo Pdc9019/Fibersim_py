@@ -1,72 +1,69 @@
 from __future__ import annotations
-from typing import Tuple
 import numpy as np
 
-def map_bits_to_symbols(bits: np.ndarray, M: int) -> np.ndarray:
-    """
-    Devuelve símbolos complejos normalizados a potencia unitaria promedio.
-    BPSK, QPSK Gray, 16QAM Gray.
-    """
-    if M == 2:
-        # BPSK: {+1, -1}
-        return (1 - 2*bits.astype(np.int8)).astype(np.complex128)
-    k = int(np.log2(M))
-    b = bits.reshape(-1, k)
-    if M == 4:
-        # Gray QPSK: 00 -> 1+1j, 01 -> -1+1j, 11 -> -1-1j, 10 -> 1-1j (rotaciones equivalentes)
-        I = 1 - 2*b[:,0]
-        Q = 1 - 2*b[:,1]
-        s = (I + 1j*Q) / np.sqrt(2.0)
-        return s.astype(np.complex128)
-    if M == 16:
-        # 16QAM Gray sobre PAM {±1, ±3} normalizado
-        def pam(bit2):
-            # mapea 2 bits a {+3, +1, -1, -3}
-            return np.array([3,1,-1,-3], dtype=np.float64)[bit2]
-        idxI = b[:,0]*2 + b[:,1]
-        idxQ = b[:,2]*2 + b[:,3]
-        I = pam(idxI)
-        Q = pam(idxQ)
-        s = (I + 1j*Q)/np.sqrt(10.0)  # potencia media 1
-        return s.astype(np.complex128)
-    raise ValueError(f"M no soportado: {M}")
+def slice_to_symbols(x: np.ndarray, sps: int, delay_samp: int, Nsym: int | None = None) -> np.ndarray:
+    """Toma símbolos cada sps empezando en delay_samp. Recorta o rellena a Nsym si se pide."""
+    start = max(0, int(delay_samp))
+    y = x[start::int(sps)]
+    if Nsym is not None:
+        if len(y) >= Nsym:
+            y = y[:Nsym]
+        else:
+            y = np.pad(y, (0, Nsym - len(y)), mode="constant")
+    return y
 
-def slicer_symbols(s_rx: np.ndarray, M: int) -> np.ndarray:
-    """
-    Devuelve símbolos de decisión dura en el alfabeto respectivo.
-    """
-    if M == 2:
-        return np.where(s_rx.real >= 0, 1.0, -1.0).astype(np.complex128)
-    if M == 4:
-        I = np.where(s_rx.real >= 0, 1.0, -1.0)
-        Q = np.where(s_rx.imag >= 0, 1.0, -1.0)
-        return ((I + 1j*Q)/np.sqrt(2.0)).astype(np.complex128)
-    if M == 16:
-        # decisor por umbrales en ±2
-        def qpam(x):
-            # devuelve 3,1,-1,-3
-            r = np.empty_like(x)
-            r[x >= 2/np.sqrt(10.0)] = 3
-            r[(x < 2/np.sqrt(10.0)) & (x >= 0)] = 1
-            r[(x < 0) & (x >= -2/np.sqrt(10.0))] = -1
-            r[x < -2/np.sqrt(10.0)] = -3
-            return r
-        I = qpam(s_rx.real)
-        Q = qpam(s_rx.imag)
-        return ((I + 1j*Q)/np.sqrt(10.0)).astype(np.complex128)
-    raise ValueError(f"M no soportado: {M}")
+def phase_from_reference(rx: np.ndarray, tx_ref: np.ndarray) -> float:
+    """Fase que minimiza ||rx*e^{-jθ} - tx||^2, usando <tx, rx>."""
+    n = min(len(rx), len(tx_ref))
+    if n == 0:
+        return 0.0
+    num = np.vdot(tx_ref[:n], rx[:n])  # conj(tx) @ rx
+    return float(np.angle(num))
 
-def ber_from_symbols(s_tx: np.ndarray, s_hat: np.ndarray, M: int) -> float:
+def ber_from_symbols(tx_syms_ref: np.ndarray, rx_syms: np.ndarray, M: int = 2) -> float:
+    """BER vs referencia conocida. Por ahora BPSK."""
+    n = min(len(tx_syms_ref), len(rx_syms))
+    if n == 0:
+        return float("nan")
+    if M != 2:
+        raise NotImplementedError("BER solo BPSK por ahora")
+
+    rx = rx_syms[:n]
+    tx = tx_syms_ref[:n]
+
+    theta = phase_from_reference(rx, tx)
+    rx_rot = rx * np.exp(-1j * theta)
+
+    b_tx = (tx.real < 0).astype(np.uint8)
+    b_rx = (rx_rot.real < 0).astype(np.uint8)
+    return float(np.mean(b_tx ^ b_rx))
+
+def find_best_delay(
+    rx_wave: np.ndarray,
+    sps: int,
+    tx_syms_ref: np.ndarray,
+    guess_delay: int,
+    halfwin: int = 8,
+) -> tuple[int, float, np.ndarray]:
     """
-    BER por decisión dura con Gray, estimando bits desde símbolos.
+    Busca el retardo con BER mínimo en [guess-halfwin, guess+halfwin].
+    Devuelve (best_delay, best_ber, rx_syms_best).
     """
-    if M == 2:
-        # BPSK 1 bit por símbolo
-        b_tx = (s_tx.real < 0).astype(np.uint8)
-        b_rx = (s_hat.real < 0).astype(np.uint8)
-        return float(np.mean(b_tx ^ b_rx))
-    # Para QPSK y 16QAM usa tabla inversa
-    # aproximación: tasa de símbolos errados dividida por log2(M)
-    k = int(np.log2(M))
-    sym_err = np.mean(s_tx != s_hat)
-    return float(sym_err / k)
+    Nsym = len(tx_syms_ref)
+    best_ber = 1.0
+    best_d = guess_delay
+    best_syms = None
+
+    d0 = max(0, int(guess_delay) - int(halfwin))
+    d1 = max(0, int(guess_delay) + int(halfwin))
+    for d in range(d0, d1 + 1):
+        s_hat = slice_to_symbols(rx_wave, sps=sps, delay_samp=d, Nsym=Nsym)
+        ber = ber_from_symbols(tx_syms_ref, s_hat, M=2)
+        if ber < best_ber:
+            best_ber = ber
+            best_d = d
+            best_syms = s_hat
+
+    if best_syms is None:
+        best_syms = slice_to_symbols(rx_wave, sps=sps, delay_samp=guess_delay, Nsym=Nsym)
+    return best_d, best_ber, best_syms

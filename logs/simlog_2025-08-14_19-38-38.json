@@ -1,0 +1,44 @@
+{
+  "date": "14-Aug-2025 19:38:38",
+  "elapsed_s": 10.046365976333618,
+  "global": {
+    "Rb": 10000000000.0,
+    "M": 2,
+    "sps": 8,
+    "Fs": 80000000000.0,
+    "Nsym": 16384,
+    "Ptx": 0.001
+  },
+  "pulse": {
+    "type": "RRC",
+    "roll": 0.25,
+    "span": 6
+  },
+  "chain": [
+    {
+      "type": "fiber",
+      "par": {
+        "L": 100000.0,
+        "beta2": -2.17e-26,
+        "gamma": 0.00107,
+        "dz": 1000.0,
+        "alpha": 4.343e-05
+      }
+    }
+  ],
+  "result": {
+    "status": "ok",
+    "notes": "RRC+SSFM; snapshots guardados si do_const=True",
+    "Lcum_m": 100000.0,
+    "G_dB": 0.0,
+    "Pmean_W": 1.2910505508133467e-06,
+    "backend": "GPU CuPy - NVIDIA GeForce RTX 3060 Laptop GPU",
+    "elapsed_s": 10.046365976333618,
+    "delay_guess_samp": 48,
+    "delay_best_samp": 63,
+    "BER_est_BPSK": 0.0001220703125,
+    "SNR_sym_dB": 0.02199535203768733,
+    "OSNR_final_dB": null,
+    "Pout_dBm": -28.890567526913756
+  }
+}
