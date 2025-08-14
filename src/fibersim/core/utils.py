@@ -1,7 +1,12 @@
 from __future__ import annotations
-from typing import Any, Dict, Callable, Tuple
+from typing import Any, Dict
 import numpy as _np  # diseño de taps en CPU
-from .array_api import xp, xsignal
+
+# Importa el selector de backend en runtime
+from . import array_api as ap  # ap.xp decidirá NumPy o CuPy según FIBERSIM_GPU
+
+# Alias corto opcional
+xp = ap.xp
 
 def fill_defaults(par: Dict[str, Any] | None, defaults: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(defaults)
@@ -39,16 +44,31 @@ def _rrc_taps(beta: float, span: int, sps: int) -> _np.ndarray:
     taps = taps / _np.sqrt(_np.sum(taps**2))
     return taps
 
+def _xsignal():
+    """
+    Devuelve el módulo de señal adecuado según el backend activo.
+    Evita mezclar SciPy con arrays de CuPy.
+    """
+    if getattr(ap.xp, "__name__", "") == "cupy":
+        import cupyx.scipy.signal as signal
+    else:
+        import scipy.signal as signal
+    return signal
+
 def get_rx_filter(sps: int, roll: float, span: int):
     """Matched filter RRC: devuelve función filtro(x) consistente con el backend."""
+    # Diseña taps en NumPy y súbelos al backend actual
     h = _rrc_taps(beta=roll, span=span, sps=sps).astype(_np.float64)
-    h_backend = xp.asarray(h)  # sube a CuPy si corresponde
+    h_backend = ap.xp.asarray(h)
 
     def filt(x):
-        den = xp.asarray([1.0], dtype=h_backend.dtype)
-        return xsignal.lfilter(h_backend, den, x)
+        sig = _xsignal()  # elige SciPy o cupyx.scipy en cada llamada
+        x_b = ap.xp.asarray(x)
+        den = ap.xp.asarray([1.0], dtype=h_backend.dtype)
+        return sig.lfilter(h_backend, den, x_b)
+
     return filt
 
 def get_tx_filter(sps: int, roll: float, span: int) -> _np.ndarray:
-    """Devuelve taps RRC (numpy). Se usa en TX; en GPU se suben a cupy en el uso."""
+    """Devuelve taps RRC (numpy). Se usa en TX; en GPU se suben a CuPy en el uso."""
     return _rrc_taps(beta=roll, span=span, sps=sps)

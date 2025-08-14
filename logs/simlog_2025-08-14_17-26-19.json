@@ -1,0 +1,27 @@
+{
+  "date": "14-Aug-2025 17:26:19",
+  "elapsed_s": 0.026174545288085938,
+  "global": {
+    "Rb": 32000000000.0,
+    "M": 2,
+    "sps": 32,
+    "Fs": 1024000000000.0,
+    "Nsym": 4096,
+    "Ptx": 0.01
+  },
+  "pulse": {
+    "type": "RRC",
+    "roll": 0.1,
+    "span": 10
+  },
+  "chain": [],
+  "result": {
+    "status": "ok",
+    "notes": "RRC+SSFM; snapshots guardados si do_const=True",
+    "Lcum_m": 0.0,
+    "G_dB": 0.0,
+    "Pmean_W": null,
+    "backend": "CPU NumPy",
+    "elapsed_s": 0.026174545288085938
+  }
+}
