@@ -29,50 +29,55 @@ def run_chain(
     rxF = get_rx_filter(sps, roll, span)
 
     zCum = 0.0
-    nextConst = step_const_m
-    consZ: list[float] = []
-    consSym: list = []
-    powZ: list[float] = []
-    powW: list[float] = []
+    consZ: List[float] = []
+    consSym: List[Any] = []
+    powZ: List[float] = []
+    powW: List[float] = []
+
+    # --- SNAPSHOT INICIAL EN Z = 0 KM ---
+    if do_const:
+        B0 = rxF(A)
+        delay0 = 2 * info["pulseDelay"]
+        sym0 = B0[delay0::sps]
+        consSym.append(sym0)
+        consZ.append(0.0)
+        powZ.append(0.0)
+        powW.append(float(xp.mean(xp.abs(A) ** 2)))
 
     for k, blk in enumerate(chain):
         btype = blk.get("type")
         par = blk.get("par", {})
 
         if btype == "fiber":
-            # Particiona cada tramo en segmentos de step_const_m para capturar después de cada segmento
             Lpend = par["L"]
             parF = dict(par)
             while Lpend > 0:
-                Lstep = min(step_const_m, Lpend) if do_const else Lpend
-                parF["L"] = Lstep
+                step = min(step_const_m, Lpend) if do_const else Lpend
+                parF["L"] = step
                 A, info = fiber_ssfm(A, info, parF, dz_override=dz_override)
-                zCum += Lstep
-                Lpend -= Lstep
+                zCum += step
+                Lpend -= step
 
-                # Snapshot
                 if do_const:
                     B = rxF(A)
-                    delay = 2 * info["pulseDelay"]  # Tx + Rx
+                    delay = 2 * info["pulseDelay"]
                     sym = B[delay::sps]
                     consSym.append(sym)
                     consZ.append(zCum)
                     powZ.append(zCum)
                     powW.append(float(xp.mean(xp.abs(A) ** 2)))
 
-            # pérdida por fusión si el siguiente bloque también es fibra
             if use_splice_loss and k < len(chain) - 1 and chain[k + 1].get("type") == "fiber" and splice_dB:
                 A = A * (10 ** (-splice_dB / 20.0))
 
         elif btype == "edfa":
             A, info = edfa_block(A, info, par)
-            # también podemos registrar potencia tras EDFA
             if do_const:
                 B = rxF(A)
                 delay = 2 * info["pulseDelay"]
                 sym = B[delay::sps]
                 consSym.append(sym)
-                consZ.append(zCum)  # misma distancia, después del EDFA
+                consZ.append(zCum)
                 powZ.append(zCum)
                 powW.append(float(xp.mean(xp.abs(A) ** 2)))
         else:

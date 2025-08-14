@@ -113,7 +113,7 @@ def save_constellations_3d(consSym, consZ_m, outpath: Path,
 def save_constellations_3d_html(consSym, consZ_m, outpath: Path,
                                 every: int = 1, pts_per_slice: int = 2000, marker_size: float = 2.0,
                                 theme: str = "plotly_dark",
-                                add_centroids: bool = false,
+                                add_centroids: bool = False,
                                 add_slider: bool = True):
     import numpy as np
     import plotly.graph_objects as go
