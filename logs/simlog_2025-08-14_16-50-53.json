@@ -1,4 +1,6 @@
 {
+  "date": "14-Aug-2025 16:50:53",
+  "elapsed_s": 4.36646032333374,
   "global": {
     "Rb": 32000000000.0,
     "M": 2,
@@ -30,5 +32,12 @@
         "nsp": 2.5
       }
     }
-  ]
+  ],
+  "result": {
+    "status": "ok",
+    "notes": "RRC+SSFM; snapshots guardados si do_const=True",
+    "Lcum_m": 40000.0,
+    "G_dB": 10.0,
+    "Pmean_W": 3.9513091796546465e-05
+  }
 }

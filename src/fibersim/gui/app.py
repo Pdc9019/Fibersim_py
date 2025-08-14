@@ -272,7 +272,7 @@ with col4: do_eye       = st.checkbox("Eye Diagram final", value=True)
 
 colh1, colh2 = st.columns(2)
 with colh1: do_const3d_html = st.checkbox("3D interactivo (HTML)", value=True)
-with colh2: const3d_html_pts = st.slider("Puntos por snapshot 3D", min_value=200, max_value=4000, value=1200, step=200)
+with colh2: const3d_html_pts = st.slider("Puntos por snapshot 3D", min_value=200, max_value=600, value=400, step=50)
 
 plots_dir = st.text_input("Carpeta de plots", value="plots")
 outdir    = st.text_input("Carpeta de logs", value="logs")
