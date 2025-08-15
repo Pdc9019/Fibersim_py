@@ -53,7 +53,7 @@ pydantic>=2.4
 Clona el repo y crea un entorno:
 
 ```bash
-git clone https://github.com/tu-usuario/FiberSim.git
+git clone https://github.com/pdc9019/FiberSim.git
 cd FiberSim
 
 # venv de ejemplo
