@@ -82,6 +82,7 @@ pip install cupy-cuda11x
 ## Ejecución de la GUI
 
 ```bash
+$env:PYTHONPATH = "src"
 streamlit run src/fibersim/gui/app.py
 ```
 
