@@ -27,6 +27,7 @@ Dependencias principales:
 - pydantic 2.x
 
 Opcional para GPU:
+- instalar cuda 12.9 de la página de NVIDIA https://developer.nvidia.com/cuda-12-9-0-download-archive
 - cupy-cudaXX compatible con tu versión de CUDA
 
 Archivo sugerido `requirements.txt`:
