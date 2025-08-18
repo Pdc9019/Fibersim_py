@@ -80,7 +80,7 @@ Por qué así: slicing determinista evita dobles contajes de delay. La ruta cohe
 
 ---
 
-## 6. Diagrama de flujo (Mermaid)
+## 6. Diagrama de flujo
 
 ```mermaid
 flowchart TD
