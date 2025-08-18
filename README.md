@@ -106,17 +106,6 @@ flowchart TD
   P --> Q[Log JSON e imagenes HTML]
   Q --> R[GUI resumen y perfiles]
 ```
-
----
-
-## 7. Cómo exportar este manual a PDF
-
-- Opción 1 (VS Code): abre este `.md` y usa la extensión "Markdown PDF" o similar para exportar a PDF.
-- Opción 2 (CLI pandoc):
-  - Instala pandoc y una distribución LaTeX.
-  - Comando ejemplo: `pandoc -s docs/simulador_gui_manual.md -o docs/simulador_gui_manual.pdf`
-- Opción 3 (Imprimir a PDF): abre el archivo en el navegador y usa "Imprimir" → "Guardar como PDF".
-
 ---
 
 ## 8. Apéndice: rutas relevantes
