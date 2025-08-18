@@ -80,7 +80,7 @@ Por qué así: slicing determinista evita dobles contajes de delay. La ruta cohe
 
 ---
 
-## 6. Diagrama de flujo
+## 6. Diagrama de flujo (Mermaid)
 
 ```mermaid
 flowchart TD
@@ -107,9 +107,17 @@ flowchart TD
   Q --> R[GUI resumen y perfiles]
 ```
 
+---
 
+## 7. Cómo exportar este manual a PDF
 
+- Opción 1 (VS Code): abre este `.md` y usa la extensión "Markdown PDF" o similar para exportar a PDF.
+- Opción 2 (CLI pandoc):
+  - Instala pandoc y una distribución LaTeX.
+  - Comando ejemplo: `pandoc -s docs/simulador_gui_manual.md -o docs/simulador_gui_manual.pdf`
+- Opción 3 (Imprimir a PDF): abre el archivo en el navegador y usa "Imprimir" → "Guardar como PDF".
 
+---
 
 ## 8. Apéndice: rutas relevantes
 
@@ -120,4 +128,75 @@ flowchart TD
 - Logs y plots: `logs/`, `plots/`
 - Ejemplos: `examples/configs/*.json` (la GUI los detecta automáticamente si validan contra el esquema)
 
+---
 
+## Requisitos
+
+- Python 3.10 o superior
+- Windows, Linux o macOS
+
+Dependencias principales:
+- numpy, scipy, matplotlib, plotly, streamlit
+- typer, rich
+- pydantic 2.x
+
+Opcional para GPU:
+- instalar CUDA 12.9 desde: https://developer.nvidia.com/cuda-12-9-0-download-archive
+- cupy-cudaXX compatible con tu versión de CUDA
+
+Archivo sugerido `requirements.txt`:
+
+```txt
+numpy>=1.23
+scipy>=1.9
+matplotlib>=3.7
+plotly>=5.17
+streamlit>=1.30
+typer[all]>=0.9
+rich>=13.0
+pydantic>=2.4
+# GPU opcional, instala solo si tienes CUDA
+# cupy-cuda12x>=12.0
+# o
+# cupy-cuda11x>=12.0
+```
+
+---
+
+## Instalación
+
+Clona el repo y crea un entorno:
+
+```bash
+git clone https://github.com/pdc9019/FiberSim.git
+cd FiberSim
+
+# venv de ejemplo
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# Linux/macOS
+# source .venv/bin/activate
+
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+GPU opcional con CuPy: instala el wheel que corresponda a tu CUDA.
+
+```bash
+# Ejemplos, elige uno
+pip install cupy-cuda12x
+# o
+pip install cupy-cuda11x
+```
+
+---
+
+## Ejecución de la GUI
+
+```bash
+# PowerShell (Windows): exporta PYTHONPATH para que 'src' se resuelva
+$env:PYTHONPATH = "src"
+streamlit run src/fibersim/gui/app.py
+```
