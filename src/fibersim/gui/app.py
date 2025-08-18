@@ -142,6 +142,26 @@ PRESETS: Dict[str, Dict[str, Any]] = {
     }
 }
 
+# Descubrir archivos JSON en examples/configs que validen contra el esquema
+def discover_example_files() -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    try:
+        base = pathlib.Path(__file__).resolve().parents[3]  # repo root
+        exdir = base / "examples" / "configs"
+        if not exdir.exists():
+            return out
+        for p in sorted(exdir.glob("*.json")):
+            try:
+                raw = json.loads(p.read_text(encoding="utf-8"))
+                cfg = SimConfig.model_validate(raw)
+                out[p.name] = cfg.model_dump(by_alias=True)
+            except Exception:
+                # ignorar archivos que no cumplan el esquema
+                continue
+    except Exception:
+        pass
+    return out
+
 # ------------------------- página / estado -------------------------
 
 st.set_page_config(page_title="FiberSim GUI", layout="wide")
@@ -215,6 +235,25 @@ if st.sidebar.button("Cargar ejemplo", use_container_width=True):
         st.sidebar.success("Ejemplo cargado")
     except Exception as e:
         st.sidebar.error(f"No se pudo cargar: {e}")
+
+# Ejemplos desde archivos en examples/configs
+files_map = discover_example_files()
+if files_map:
+    st.sidebar.markdown("Ejemplos desde archivos")
+    file_opts = sorted(files_map.keys())
+    file_sel = st.sidebar.selectbox("Elegir archivo", options=file_opts, index=0, key="ex_file_sel")
+    if st.sidebar.button("Cargar desde archivo", use_container_width=True, key="btn_load_file_ex"):
+        try:
+            raw = files_map[file_sel]
+            cfg = SimConfig.model_validate(raw)
+            st.session_state["global"] = cfg.global_.model_dump()
+            st.session_state["pulse"]  = cfg.pulse.model_dump()
+            st.session_state.chain     = [b.model_dump() for b in cfg.chain]
+            for b in st.session_state.chain: ensure_uid(b)
+            st.session_state.edit_idx = None
+            st.sidebar.success(f"Ejemplo '{file_sel}' cargado")
+        except Exception as e:
+            st.sidebar.error(f"No se pudo cargar archivo: {e}")
 
 # ------------------------- parámetros simples y robustos -------------------------
 
@@ -310,7 +349,7 @@ with c2:
         blk = EdfaBlock(type="edfa", par=EdfaPar(G_dB=10.0, nsp=2.5)).model_dump()
         ensure_uid(blk); st.session_state.chain.append(blk)
 with c3:
-    cards_per_row = st.slider("Tarjetas por fila", min_value=2, max_value=6, value=4, help="Ajusta el zoom de la grilla")
+    cards_per_row = st.slider("Tarjetas por fila", min_value=1, max_value=3, value=3, help="Ajusta el zoom de la grilla")
 
 columns_grid = st.columns(cards_per_row)
 for i, blk in enumerate(st.session_state.chain):
@@ -401,7 +440,7 @@ with col4: do_eye       = st.checkbox("Eye final", value=True)
 
 colh1, colh2 = st.columns(2)
 with colh1: do_const3d_html = st.checkbox("3D interactivo HTML", value=True)
-with colh2: const3d_html_pts = st.slider("Puntos por snapshot 3D", min_value=100, max_value=200, value=150, step=10)
+with colh2: const3d_html_pts = st.slider("Puntos por snapshot 3D", min_value=100, max_value=400, value=200, step=10)
 
 plots_dir = st.text_input("Carpeta de plots", value="plots")
 outdir    = st.text_input("Carpeta de logs", value="logs")
@@ -526,7 +565,7 @@ ber = res.get("BER_est_BPSK", None)
 if ber is None:
     ber = res.get("BER_post", None)
 if ber is not None:
-    chips.append(f"<span class='meta-chip'>BER: {float(ber):.3e}</span>")
+    chips.append(f"<span class='meta-chip'>BER: {float(ber)*100:.4f}%</span>")
 snr = res.get("SNR_sym_dB", None)
 if snr is not None: chips.append(f"<span class='meta-chip'>SNR símbolo: {snr:.2f} dB</span>")
 osnr = res.get("OSNR_final_dB", None)
@@ -599,13 +638,34 @@ if isinstance(profile_res, list) and profile_res:
     st.subheader("Perfiles z (medidos)")
 else:
     st.subheader("Perfiles z (estimados)")
-pc1, pc2, pc3, pc4 = st.columns(4)
-with pc1: show_P = st.checkbox("Potencia [dBm]", value=True)
-with pc2: show_O = st.checkbox("OSNR [dB]", value=True)
-with pc3: show_B = st.checkbox("BER", value=True)
-with pc4: Bo_GHz = st.number_input("Bo [GHz] para OSNR", value=12.5, min_value=0.1, max_value=100.0, step=0.1)
+
+# Controles: mostrar OSNR/BER solo si hay datos disponibles en el perfil actual
+has_osnr = any(p.get("OSNR_dB") is not None for p in (profile_res or [])) if is_measured else True
+has_ber  = any(p.get("BER") is not None for p in (profile_res or [])) if is_measured else True
+
+if has_osnr and has_ber:
+    pc1, pc2, pc3 = st.columns(3)
+    with pc1: show_P = st.checkbox("Potencia [dBm]", value=True)
+    with pc2: show_O = st.checkbox("OSNR [dB]", value=True)
+    with pc3: show_B = st.checkbox("BER", value=False)
+elif has_osnr and not has_ber:
+    pc1, pc2 = st.columns(2)
+    with pc1: show_P = st.checkbox("Potencia [dBm]", value=True)
+    with pc2: show_O = st.checkbox("OSNR [dB]", value=True)
+    show_B = False
+elif (not has_osnr) and has_ber:
+    pc1, pc2 = st.columns(2)
+    with pc1: show_P = st.checkbox("Potencia [dBm]", value=True)
+    with pc2: show_B = st.checkbox("BER", value=False)
+    show_O = False
+else:
+    # Solo potencia
+    show_O = False; show_B = False
+    show_P = st.checkbox("Potencia [dBm]", value=True)
+
+# Bo solo aplica al perfil estimado
 if not is_measured:
-    # Fallback estimado
+    Bo_GHz = st.number_input("Bo [GHz] para OSNR", value=12.5, min_value=0.1, max_value=100.0, step=0.1)
     profile = build_profile_from_state(Bo_Hz=float(Bo_GHz)*1e9)
     st.info("Mostrando perfil estimado localmente en GUI (no hay perfil medido en el último log).")
 
