@@ -1,13 +1,15 @@
 {
+  "date": "18-Aug-2025 10:24:30",
+  "elapsed_s": 141.1060709953308,
   "global": {
     "Rb": 10000000000.0,
-    "M": 16,
+    "M": 2,
     "sps": 8,
     "Fs": 80000000000.0,
     "Nsym": 32768,
     "Ptx": 3.162e-05,
-    "mod": "16QAM",
-    "rx": "coh",
+    "mod": "BPSK",
+    "rx": "imdd",
     "pol": "sp"
   },
   "pulse": {
@@ -15,6 +17,7 @@
     "roll": 0.2,
     "span": 8
   },
+  "dsp": null,
   "chain": [
     {
       "type": "fiber",
@@ -152,5 +155,24 @@
       }
     }
   ],
-  "dsp": null
+  "result": {
+    "status": "ok",
+    "notes": "RRC+SSFM; snapshots guardados si do_const=True",
+    "Lcum_m": 400000.0,
+    "G_dB": 106.0,
+    "Pmean_W": 7.326361942589727e-08,
+    "backend": "GPU CuPy - NVIDIA GeForce RTX 3060 Laptop GPU",
+    "elapsed_s": 141.1060709953308,
+    "delay_guess_samp": 64,
+    "delay_best_samp": 71,
+    "BER_est_BPSK": 3.0517578125e-05,
+    "EVM_pre_dB": null,
+    "EVM_post_dB": null,
+    "Q_post": null,
+    "BER_pre": null,
+    "BER_post": null,
+    "SNR_sym_dB": 0.06732715919217294,
+    "OSNR_final_dB": null,
+    "Pout_dBm": -41.35111629790145
+  }
 }

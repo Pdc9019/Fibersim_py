@@ -168,13 +168,13 @@ div[data-testid="stHorizontalBlock"] { gap:.25rem; }
 
 # Estado inicial
 if "chain" not in st.session_state:
-    st.session_state.chain: List[dict] = []
+    st.session_state.chain = []
 if "global" not in st.session_state:
-    st.session_state["global"] = dict(Rb=10e9, M=2, sps=8, Fs=80e9, Nsym=16384, Ptx=1e-3, lambda_nm=1550.0)
+    st.session_state["global"] = dict(Rb=10e9, M=2, sps=8, Fs=80e9, Nsym=16384, Ptx=1e-3, lambda_nm=1550.0, mod="BPSK", rx="imdd", pol="sp")
 if "pulse" not in st.session_state:
     st.session_state["pulse"] = dict(type="RRC", roll=0.2, span=8)
 if "edit_idx" not in st.session_state:
-    st.session_state.edit_idx: int | None = None
+    st.session_state.edit_idx = None
 if "last_backend" not in st.session_state:
     st.session_state["last_backend"] = None
 
@@ -228,7 +228,7 @@ with gcol:
     g = st.session_state["global"]
 
     # Entrada en Gbaud para evitar números enormes y minimizar errores
-    Rb_gbaud = st.number_input("Rb [Gbaud]", value=float(g["Rb"]) / 1e9, min_value=0.1, step=0.1, format="%.2f")
+    Rb_gbaud = st.number_input("Rb [Gbaud]", value=float(g.get("Rb", 10e9)) / 1e9, min_value=0.1, step=0.1, format="%.2f")
     # Potencia en dBm, convertimos internamente a W
     pt_dbm_default = w_to_dbm(float(g["Ptx"]))
     Ptx_dBm = st.number_input("Potencia Tx [dBm]", value=float(pt_dbm_default), step=0.1, format="%.2f")
@@ -243,6 +243,17 @@ with gcol:
         nsym_adv = st.number_input("N símbolos", value=int(g.get("Nsym", 16384)), min_value=1024, step=1024)
         lambda_nm = st.number_input("Longitud de onda [nm]", value=float(g.get("lambda_nm", 1550.0)),
                                     min_value=1200.0, max_value=1650.0, step=1.0)
+        # Selección compacta por orden M, mapeamos a nombre de modulación
+        M_now = int(g.get("M", {"BPSK":2, "QPSK":4, "16QAM":16}.get(str(g.get("mod","BPSK")), 2)))
+        M_sel = st.selectbox("Orden de modulación M", [2,4,16], index=[2,4,16].index(M_now))
+        mod_map = {2: "BPSK", 4: "QPSK", 16: "16QAM"}
+        mod_sel = mod_map.get(int(M_sel), "BPSK")
+        # Enforzar receptor coherente si M>2
+        if int(M_sel) > 2:
+            rx_sel = "coh"
+            st.caption("Para QPSK/16QAM se requiere receptor coherente (forzado a 'coh').")
+        else:
+            rx_sel = st.selectbox("Receptor", ["imdd","coh"], index=["imdd","coh"].index(str(g.get("rx","imdd"))))
         usar_avanzado = st.checkbox("Usar estos valores avanzados", value=False)
 
     # Aplicar reglas robustas
@@ -250,13 +261,27 @@ with gcol:
         g["sps"] = int(max(2, sps_adv))
         g["Nsym"] = int(nsym_adv)
         g["lambda_nm"] = float(lambda_nm)
+        g["mod"] = mod_sel
+        g["M"] = {"BPSK": 2, "QPSK": 4, "16QAM": 16}.get(mod_sel, 2)
+        g["rx"] = rx_sel
     else:
         g["sps"] = 8
         g["Nsym"] = {"Rápida": 8192, "Media": 16384, "Alta": 32768}[calidad]
         g["lambda_nm"] = float(g.get("lambda_nm", 1550.0))
+        # Defaults simples
+        g.setdefault("mod", "BPSK")
+        g.setdefault("M", 2)
+        # Para BPSK permitir IMDD por defecto, si el usuario luego cambia M en avanzado se forzará coh
+        g.setdefault("rx", "imdd")
 
     g["Rb"] = float(Rb_gbaud) * 1e9
-    g["M"] = 2  # BPSK por ahora
+    # Derivado de la modulación para PRBS (si M está dado explícitamente prevalece)
+    g["M"] = int(g.get("M", {"BPSK": 2, "QPSK": 4, "16QAM": 16}.get(str(g.get("mod","BPSK")), 2)))
+    # Mantener consistencia entre M y mod
+    g["mod"] = {2: "BPSK", 4: "QPSK", 16: "16QAM"}.get(int(g.get("M", 2)), str(g.get("mod","BPSK")))
+    # Enforzar coherente si M>2
+    if int(g["M"]) > 2:
+        g["rx"] = "coh"
     g["Fs"] = float(g["Rb"]) * int(g["sps"])
     g["Ptx"] = float(dbm_to_w(Ptx_dBm))
 
@@ -498,9 +523,10 @@ chips = []
 bk = st.session_state.get("last_backend") or res.get("backend")
 if bk: chips.append(f"<span class='meta-chip'>Backend: {bk}</span>")
 ber = res.get("BER_est_BPSK", None)
-if ber is not None: 
-    ber_percent = ber * 100  # Convertir a porcentaje
-    chips.append(f"<span class='meta-chip'>BER: {ber_percent:.4f}%</span>")
+if ber is None:
+    ber = res.get("BER_post", None)
+if ber is not None:
+    chips.append(f"<span class='meta-chip'>BER: {float(ber):.3e}</span>")
 snr = res.get("SNR_sym_dB", None)
 if snr is not None: chips.append(f"<span class='meta-chip'>SNR símbolo: {snr:.2f} dB</span>")
 osnr = res.get("OSNR_final_dB", None)
@@ -510,7 +536,7 @@ if chips:
 
 with st.expander("Resumen de la última ejecución", expanded=True):
     if log:
-        cols = st.columns(5)
+        cols = st.columns(8)
 
         # Backend abreviado para que no se corte
         bk_full = res.get("backend", "")
@@ -536,8 +562,15 @@ with st.expander("Resumen de la última ejecución", expanded=True):
 
         pout = res.get("Pout_dBm", None)
         cols[3].metric("Pout [dBm]", f"{pout:.2f}" if pout is not None else "n/a")
-        ber  = res.get("BER_est_BPSK", None)
-        cols[4].metric("BER BPSK", f"{ber:.3e}" if ber is not None else "n/a")
+        ber_bpsk  = res.get("BER_est_BPSK", None)
+        cols[4].metric("BER BPSK", f"{ber_bpsk:.3e}" if ber_bpsk is not None else "n/a")
+        # Coherent extras if present
+        evm_post = res.get("EVM_post_dB", None)
+        Q_post = res.get("Q_post", None)
+        ber_post = res.get("BER_post", None)
+        cols[5].metric("EVM post [dB]", f"{evm_post:.2f}" if evm_post is not None else "-")
+        cols[6].metric("Q post", f"{Q_post:.2f}" if Q_post is not None else "-")
+        cols[7].metric("BER post", f"{ber_post:.3e}" if ber_post is not None else "-")
     else:
         st.info("Aún no hay logs en la carpeta seleccionada.")
 
@@ -555,16 +588,26 @@ with cols[1]:
 with cols[2]:
     if eye.exists():  st.image(str(eye), caption="Eye Diagram")
 
-# Perfiles z en GUI
+# Perfiles z: preferir medidos del último log; si no, estimado analítico
 st.divider()
-st.subheader("Perfiles z - analítico en GUI")
+is_measured = False
+profile_res = res.get("profile", None)
+profile: List[Dict[str, Any]]
+if isinstance(profile_res, list) and profile_res:
+    profile = profile_res
+    is_measured = True
+    st.subheader("Perfiles z (medidos)")
+else:
+    st.subheader("Perfiles z (estimados)")
 pc1, pc2, pc3, pc4 = st.columns(4)
 with pc1: show_P = st.checkbox("Potencia [dBm]", value=True)
 with pc2: show_O = st.checkbox("OSNR [dB]", value=True)
 with pc3: show_B = st.checkbox("BER", value=True)
 with pc4: Bo_GHz = st.number_input("Bo [GHz] para OSNR", value=12.5, min_value=0.1, max_value=100.0, step=0.1)
-
-profile = build_profile_from_state(Bo_Hz=float(Bo_GHz)*1e9)
+if not is_measured:
+    # Fallback estimado
+    profile = build_profile_from_state(Bo_Hz=float(Bo_GHz)*1e9)
+    st.info("Mostrando perfil estimado localmente en GUI (no hay perfil medido en el último log).")
 
 try:
     import plotly.graph_objs as go

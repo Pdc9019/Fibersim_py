@@ -42,6 +42,10 @@ def _prepare_backend(use_gpu: bool):
     save_constellations_3d = mods["fibersim.core.plot"].save_constellations_3d
     save_constellations_3d_html = mods["fibersim.core.plot"].save_constellations_3d_html
     modem = mods["fibersim.core.modem"]
+    try:
+        dsp = importlib.import_module("fibersim.core.dsp")
+    except Exception:
+        dsp = None
 
     try:
         backend_info = "CuPy"
@@ -66,7 +70,8 @@ def _prepare_backend(use_gpu: bool):
         save_power_evolution,
         save_constellations_3d,
         save_constellations_3d_html,
-        modem,
+    modem,
+    dsp,
     )
 
 def _to_numpy_if_needed(arr, xp):
@@ -135,17 +140,24 @@ def _execute(
         save_constellations_3d,
         save_constellations_3d_html,
         modem,
+        dsp,
     ) = _prepare_backend(gpu)
 
     cfg = _load_config(config)
     parGlob = cfg["global"]
     chain = cfg["chain"]
     pulse_par = cfg["pulse"]
+    dsp_par = cfg.get("dsp", {})
 
     # TX
     info: Dict[str, Any] = {}
-    bits, info = prbs_gen(parGlob["Nsym"], parGlob["M"], info)
-    syms = (1 - 2 * bits.astype(xp.int8)).astype(xp.complex128)
+    mod = str(parGlob.get("mod", "BPSK")).upper()
+    rx_mode = str(parGlob.get("rx", "imdd"))
+    # Choose PRBS M based on modulation to keep Nsym symbols consistent
+    M_tx = {"BPSK": 2, "QPSK": 4, "16QAM": 16}.get(mod, 2)
+    bits, info = prbs_gen(parGlob["Nsym"], M_tx, info)
+    # Map bits to symbols on selected backend
+    syms = modem.map_bits_to_symbols(bits, M_tx, xp)
 
     pulse_par = dict(pulse_par)
     pulse_par["Rb"] = parGlob["Rb"]
@@ -176,42 +188,83 @@ def _execute(
     plots_p = pathlib.Path(plots_dir); plots_p.mkdir(parents=True, exist_ok=True)
     log_name = f"simlog_{time.strftime('%Y-%m-%d_%H-%M-%S')}.json"
 
-    # ---------------- BER y SNR con búsqueda de retardo ----------------
+    # ---------------- RX / métricas ----------------
     sps = int(diag.get("sps", parGlob["sps"]))
     span = int(pulse_par.get("span", 8))
-    delay_guess = int(diag.get("delay_samp", (span * sps) // 2))
+    # delay_samp in diag already accounts for TX+RX filter group delay (≈ span*sps)
+    delay_guess = int(diag.get("delay_samp", 0))
 
     Aout_np = _to_numpy_if_needed(Aout, xp)
     syms_np = _to_numpy_if_needed(syms, xp)
     Nsym = int(parGlob["Nsym"])
 
-    best_delay, ber_est, s_hat = modem.find_best_delay(
-        rx_wave=Aout_np,
-        sps=sps,
-        tx_syms_ref=syms_np[:Nsym],
-        guess_delay=delay_guess,
-        halfwin=max(8, sps * 2),
-    )
-    delay_total = int(best_delay)
-
-    # SNR a nivel de símbolo siempre disponible
+    # Branch: BPSK IMDD keeps best-delay search; otherwise deterministic slicing + alignment
+    EVM_dB = None; Q_post = None
+    if (M_tx == 2) and (str(rx_mode).lower() == "imdd"):
+        best_delay, BER_est, s_hat = modem.find_best_delay(
+            rx_wave=Aout_np,
+            sps=sps,
+            tx_syms_ref=syms_np[:Nsym],
+            guess_delay=delay_guess,
+            halfwin=max(8, sps * 2),
+        )
+        delay_total = int(best_delay)
+    else:
+        # Sample to symbols deterministically around measured delay
+        s_hat = modem.slice_to_symbols(Aout_np, sps=sps, delay_samp=delay_guess, Nsym=Nsym)
+        delay_total = int(delay_guess)
+        # For QPSK/16QAM normalize and align phase vs tx reference
+        if M_tx > 2:
+            s_hat = modem.normalize_constellation(s_hat, None)
+            # tx reference already has unit power; ensure same truncation length
+            tx_ref = syms_np[: len(s_hat)]
+            s_hat = modem.carrier_phase_align(s_hat, tx_ref)
+        # Metrics
+        BER_est = modem.ber_from_symbols(syms_np[: len(s_hat)], s_hat, M=M_tx)
+        try:
+            EVM_dB = modem.evm_rms_db(syms_np[: len(s_hat)], s_hat)
+        except Exception:
+            EVM_dB = None
+        try:
+            evm_lin = 10 ** (float(EVM_dB) / 20.0) if EVM_dB is not None else None
+            Q_post = modem.q_factor_from_evm(evm_lin) if evm_lin is not None else None
+        except Exception:
+            Q_post = None
     try:
-        snr_sym_db = _snr_sym_db(syms_np[:Nsym], s_hat)
+        snr_sym_db = _snr_sym_db(syms_np[: len(s_hat)], s_hat)
     except Exception:
         snr_sym_db = float("nan")
 
-    # OSNR final si el core dejó perfil osnrZ_dB
+    # Perfil medido (si hay)
     osnr_final_db = None
+    profile = None
     try:
+        powZ = diag.get("powZ_m", None)
+        powW = diag.get("powW_W", None)
         osnrZ = diag.get("osnrZ_dB", None)
-        if osnrZ and len(osnrZ) > 0:
-            # tomar último finito
-            for v in reversed(osnrZ):
-                if v is not None:
-                    osnr_final_db = float(v)
-                    break
+        if powZ is not None and powW is not None and len(powZ) == len(powW):
+            profile = []
+            for i, (z, p) in enumerate(zip(powZ, powW)):
+                z_km = float(z) / 1e3
+                try:
+                    p_dbm = 10.0 * math.log10(max(float(p), 1e-30) / 1e-3)
+                except Exception:
+                    p_dbm = None
+                osnr_i = None
+                if osnrZ is not None and i < len(osnrZ) and osnrZ[i] is not None:
+                    try:
+                        osnr_i = float(osnrZ[i])
+                    except Exception:
+                        osnr_i = None
+                profile.append({"z_km": z_km, "P_dBm": p_dbm, "OSNR_dB": osnr_i})
+            # último OSNR válido
+            if osnrZ:
+                for v in reversed(osnrZ):
+                    if v is not None:
+                        osnr_final_db = float(v)
+                        break
     except Exception:
-        osnr_final_db = None
+        profile = None
 
     # Pout dBm si vino Pmean
     pout_dbm = None
@@ -229,12 +282,15 @@ def _execute(
         "Pmean_W": info.get("Pmean", None),
         "backend": backend_info,
         "elapsed_s": elapsed,
-        "delay_guess_samp": delay_guess,
         "delay_best_samp": delay_total,
-        "BER_est_BPSK": ber_est,
+        "BER_est_BPSK": None if M_tx > 2 else BER_est,
+        "BER_post": BER_est if M_tx > 2 else None,
+        "EVM_post_dB": EVM_dB if M_tx > 2 else None,
+        "Q_post": Q_post if M_tx > 2 else None,
         "SNR_sym_dB": snr_sym_db,
         "OSNR_final_dB": osnr_final_db,
         "Pout_dBm": pout_dbm,
+        "profile": profile,
     }
 
     from .io import write_simlog
@@ -246,6 +302,11 @@ def _execute(
         consZ_np = _to_numpy_if_needed(diag["consZ_m"], xp)
         powZ_np = _to_numpy_if_needed(diag.get("powZ_m", []), xp)
         powW_np = _to_numpy_if_needed(diag.get("powW_W", []), xp)
+        # Normalizar cada slice para visualización (no afecta métricas)
+        try:
+            consSym_np = [modem.normalize_constellation(c) for c in consSym_np]
+        except Exception:
+            pass
 
         save_constellations_grid(consSym_np, consZ_np, plots_p / "constelaciones.png")
         save_power_evolution(powZ_np, powW_np, plots_p / "potencia.png", unit="dBm")
@@ -269,8 +330,12 @@ def _execute(
     rprint(f"[bold cyan]{backend_info}[/bold cyan]")
     rprint(f"[bold green]Listo[/bold green]: log en [cyan]{outdir}/{log_name}[/cyan], "
            f"plots en [cyan]{plots_dir}[/cyan].")
+    ber_print = result.get("BER_est_BPSK")
+    if ber_print is None:
+        ber_print = result.get("BER_post")
+    ber_str = (f"{ber_print:.3e}" if isinstance(ber_print, (int, float)) and ber_print is not None else "n/a")
     rprint(f"L = {result['Lcum_m']/1e3:.1f} km | G = {result['G_dB']:.1f} dB | elapsed = {elapsed:.3f} s "
-           f"| BER={ber_est:.3e} | SNRsym={snr_sym_db:.2f} dB"
+           f"| BER={ber_str} | SNRsym={snr_sym_db:.2f} dB"
            + (f" | OSNR={osnr_final_db:.2f} dB" if osnr_final_db is not None else ""))
 
     return backend_info

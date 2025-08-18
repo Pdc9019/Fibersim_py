@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Literal, List, Union
+from typing import Literal, List, Union, Optional
 from pydantic import BaseModel, Field, PositiveFloat, NonNegativeFloat, ValidationError
 
 # ---- Modelos de bloques ----
@@ -37,11 +37,26 @@ class GlobalPar(BaseModel):
     Fs: PositiveFloat
     Nsym: int = Field(..., ge=1)
     Ptx: PositiveFloat
+    # Nuevos parámetros globales (backwards-compatible con defaults)
+    mod: Literal["BPSK", "QPSK", "16QAM"] = "BPSK"
+    rx: Literal["imdd", "coh"] = "imdd"
+    pol: Literal["sp", "dp"] = "sp"
+
+class DspPar(BaseModel):
+    """Parámetros de DSP en recepción coherente.
+
+    Todos con valores por defecto para mantener compatibilidad.
+    """
+    timing_algo: Literal["none", "mm"] = "mm"
+    eq_taps: int = 11
+    eq_mu: float = 1e-3
+    phase_algo: Literal["none", "bps", "vv"] = "bps"
 
 class SimConfig(BaseModel):
     global_: GlobalPar = Field(..., alias="global")
     pulse: PulsePar
     chain: List[Block]
+    dsp: Optional[DspPar] = None
 
     class Config:
         populate_by_name = True

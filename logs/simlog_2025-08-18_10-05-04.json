@@ -1,14 +1,13 @@
 {
+  "date": "18-Aug-2025 10:05:04",
+  "elapsed_s": 59.52697515487671,
   "global": {
     "Rb": 10000000000.0,
-    "M": 16,
-    "sps": 8,
-    "Fs": 80000000000.0,
-    "Nsym": 32768,
-    "Ptx": 3.162e-05,
-    "mod": "16QAM",
-    "rx": "coh",
-    "pol": "sp"
+    "M": 2,
+    "sps": 12,
+    "Fs": 120000000000.0,
+    "Nsym": 16384,
+    "Ptx": 3.162e-05
   },
   "pulse": {
     "type": "RRC",
@@ -143,14 +142,21 @@
         "dz": 1000.0,
         "alpha": 0.0001151
       }
-    },
-    {
-      "type": "edfa",
-      "par": {
-        "G_dB": 21.2,
-        "nsp": 1.6
-      }
     }
   ],
-  "dsp": null
+  "result": {
+    "status": "ok",
+    "notes": "RRC+SSFM; snapshots guardados si do_const=True",
+    "Lcum_m": 400000.0,
+    "G_dB": 84.8,
+    "Pmean_W": 5.327649923923166e-08,
+    "backend": "GPU CuPy - NVIDIA GeForce RTX 3060 Laptop GPU",
+    "elapsed_s": 59.52697515487671,
+    "delay_guess_samp": 96,
+    "delay_best_samp": 107,
+    "BER_est_BPSK": 0.00018310546875,
+    "SNR_sym_dB": 0.005928418080524869,
+    "OSNR_final_dB": null,
+    "Pout_dBm": -42.73464320080886
+  }
 }
