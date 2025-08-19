@@ -34,7 +34,7 @@ def run_chain(
     powZ: List[float] = []
     powW: List[float] = []
 
-    # --- SNAPSHOT INICIAL EN Z = 0 KM ---
+    # --- Imagen INICIAL EN Z = 0 KM ---
     if do_const:
         B0 = rxF(A)
         delay0 = 2 * info["pulseDelay"]

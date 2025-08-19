@@ -1,0 +1,39 @@
+{
+  "global": {
+    "Rb": 32e9,
+    "M": 4,
+    "sps": 16,
+    "Fs": 512e9,
+    "Nsym": 8192,
+    "Ptx": 0.01,
+    "mod": "QPSK",
+    "rx": "coh",
+    "pol": "dp"
+  },
+  "pulse": {
+    "type": "RRC",
+    "roll": 0.1,
+    "span": 10
+  },
+  "chain": [
+    { "type": "fiber", "par": { "L": 40000.0, "beta2": -21e-27, "gamma": 0.0013, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "fiber", "par": { "L": 10000.0, "beta2": 85e-27, "gamma": 0.0025, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 10.0, "nsp": 2.5 } },
+
+    { "type": "fiber", "par": { "L": 40000.0, "beta2": -21e-27, "gamma": 0.0013, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "fiber", "par": { "L": 10000.0, "beta2": 85e-27, "gamma": 0.0025, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 10.0, "nsp": 2.5 } },
+
+    { "type": "fiber", "par": { "L": 40000.0, "beta2": -21e-27, "gamma": 0.0013, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "fiber", "par": { "L": 10000.0, "beta2": 85e-27, "gamma": 0.0025, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 10.0, "nsp": 2.5 } },
+
+    { "type": "fiber", "par": { "L": 40000.0, "beta2": -21e-27, "gamma": 0.0013, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "fiber", "par": { "L": 10000.0, "beta2": 85e-27, "gamma": 0.0025, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 10.0, "nsp": 2.5 } },
+
+    { "type": "fiber", "par": { "L": 40000.0, "beta2": -21e-27, "gamma": 0.0013, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "fiber", "par": { "L": 10000.0, "beta2": 85e-27, "gamma": 0.0025, "dz": 1.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 10.0, "nsp": 2.5 } }
+  ]
+}
