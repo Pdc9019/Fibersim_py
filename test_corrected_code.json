@@ -1,0 +1,22 @@
+{
+  "global": {
+    "Ptx": 0.01,
+    "Rb": 32000000000.0,
+    "M": 4,
+    "mod": "QPSK",
+    "sps": 8,
+    "rx": "coh",
+    "pol": "sp",
+    "Nsym": 8192
+  },
+  "pulse": {
+    "type": "RRC",
+    "roll": 0.1
+  },
+  "chain": [
+    {"type": "fiber", "par": {"L": 50000, "beta2": -2.1e-26, "gamma": 0.0013, "alpha": 4.6e-05}},
+    {"type": "edfa", "par": {"G_dB": 10.0, "nsp": 1.6}},
+    {"type": "fiber", "par": {"L": 50000, "beta2": -2.1e-26, "gamma": 0.0013, "alpha": 4.6e-05}},
+    {"type": "edfa", "par": {"G_dB": 10.0, "nsp": 1.6}}
+  ]
+}

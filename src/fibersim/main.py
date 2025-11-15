@@ -15,7 +15,11 @@ def _load_config(config_path: str) -> Dict[str, Any]:
 def _prepare_backend(use_gpu: bool):
     os.environ["FIBERSIM_GPU"] = "1" if use_gpu else "0"
 
+    # Configurar backend ANTES que cualquier cálculo
     from .core import array_api as _array_api
+    backend_str = _array_api.set_backend(use_gpu)
+    
+    # Recargar módulos después del cambio de backend
     _array_api = importlib.reload(_array_api)
     xp = _array_api.xp
 
@@ -48,14 +52,16 @@ def _prepare_backend(use_gpu: bool):
         dsp = None
 
     try:
-        backend_info = "CuPy"
-        if getattr(xp, "__name__", "") == "cupy":
-            dev_id = xp.cuda.runtime.getDevice()
-            props = xp.cuda.runtime.getDeviceProperties(dev_id)
-            name = props.get("name", b"").decode(errors="ignore") if isinstance(props.get("name", b""), (bytes, bytearray)) else props.get("name", "GPU")
-            backend_info = f"GPU CuPy - {name}"
+        if _array_api.backend_name == "cupy":
+            try:
+                dev_id = xp.cuda.runtime.getDevice()
+                props = xp.cuda.runtime.getDeviceProperties(dev_id)
+                name = props.get("name", b"").decode(errors="ignore") if isinstance(props.get("name", b""), (bytes, bytearray)) else props.get("name", "GPU")
+                backend_info = f"GPU CuPy - {name}"
+            except Exception:
+                backend_info = "GPU CuPy"
         else:
-            backend_info = "CPU NumPy"
+            backend_info = backend_str
     except Exception:
         backend_info = "CPU NumPy"
 
@@ -90,8 +96,10 @@ def _to_numpy_if_needed(arr, xp):
 # ------------------------- helpers métricas -------------------------
 
 def _snr_sym_db(tx_ref_np, rx_syms_np) -> float:
-    """SNR a nivel de símbolo tras alinear fase al MMSE."""
-    import numpy as np
+    """SNR a nivel de símbolo tras alinear fase al MMSE y aplicar DSP."""
+    from .core.snr import calc_snr_post_dsp
+    _, snr_db = calc_snr_post_dsp(rx_syms_np, tx_ref_np)
+    return snr_db
     n = min(len(tx_ref_np), len(rx_syms_np))
     if n == 0:
         return float("nan")
@@ -120,13 +128,19 @@ def _execute(
     use_splice_loss: bool,
     do_const: bool,
     step_const_km: float,
+    step_plot2d_km: float,
     do_eye: bool,
     plots_dir: str,
     do_const3d: bool,
     const3d_every: int,
     const3d_pts: int,
     do_const3d_html: bool,
+    step_const3d_km: float,
     const3d_html_pts: int,
+    trace_symbols: bool = True,
+    num_traces: int = 50,
+    group_by_quadrant: bool = True,
+    show_slice_planes: bool = True,
 ):
     (
         xp,
@@ -197,6 +211,21 @@ def _execute(
     Aout_np = _to_numpy_if_needed(Aout, xp)
     syms_np = _to_numpy_if_needed(syms, xp)
     Nsym = int(parGlob["Nsym"])
+    
+    # ============ COMPENSACIÓN DIGITAL DE DISPERSIÓN CROMÁTICA (CDC) ============
+    # NOTA: Función chromatic_dispersion_compensation no implementada aún
+    # La dispersión cromática debe compensarse mediante fibra DCF en la cadena
+    beta2_total = 0.0
+    for blk in chain:
+        if blk.get("type") == "fiber":
+            L = float(blk["par"].get("L", 0))  # metros
+            beta2 = float(blk["par"].get("beta2", 0))  # s²/m
+            beta2_total += beta2 * L
+    
+    if abs(beta2_total) > 1e-30:
+        print(f"[CDC] Dispersión total acumulada: {beta2_total*1e24:.2f} ps²")
+        print(f"[CDC] Nota: Compensación digital CDC no implementada. Use fibra DCF para compensar.")
+    # ============================================================================
 
     # Branch: BPSK IMDD keeps best-delay search; otherwise deterministic slicing + alignment
     EVM_dB = None; Q_post = None
@@ -213,8 +242,9 @@ def _execute(
         # Sample to symbols deterministically around measured delay
         s_hat = modem.slice_to_symbols(Aout_np, sps=sps, delay_samp=delay_guess, Nsym=Nsym)
         delay_total = int(delay_guess)
-        # For QPSK/16QAM normalize and align phase vs tx reference
-        if M_tx > 2:
+        # For coherent receivers (BPSK/QPSK/16QAM) normalize and align phase vs tx reference
+        # CRITICAL: BPSK coherent también necesita normalización y alineación de portadora
+        if M_tx >= 2:  # CAMBIADO: era M_tx > 2, ahora incluye BPSK (M_tx=2)
             s_hat = modem.normalize_constellation(s_hat, None)
             # tx reference already has unit power; ensure same truncation length
             tx_ref = syms_np[: len(s_hat)]
@@ -230,10 +260,9 @@ def _execute(
             Q_post = modem.q_factor_from_evm(evm_lin) if evm_lin is not None else None
         except Exception:
             Q_post = None
-    try:
-        snr_sym_db = _snr_sym_db(syms_np[: len(s_hat)], s_hat)
-    except Exception:
-        snr_sym_db = float("nan")
+    
+    # SNR post-DSP eliminado - solo usamos OSNR para sistemas ópticos
+    snr_sym_db = None
 
     # Perfil medido (si hay)
     osnr_final_db = None
@@ -308,8 +337,54 @@ def _execute(
         except Exception:
             pass
 
-        save_constellations_grid(consSym_np, consZ_np, plots_p / "constelaciones.png")
+        # Filtrar datos para gráficos 2D según step_plot2d_km
+        # step_const_km es el paso de captura, step_plot2d_km es el paso de graficado
+        if len(consZ_np) > 1 and step_plot2d_km > step_const_km:
+            z_diff_m = abs(consZ_np[1] - consZ_np[0]) if len(consZ_np) > 1 else step_const_km * 1000
+            z_diff_km = z_diff_m / 1000.0
+            plot2d_every = max(1, int(round(step_plot2d_km / z_diff_km)))
+            
+            # Diezmar pero SIEMPRE incluir el último punto (constelación final)
+            consSym_plot2d = consSym_np[::plot2d_every]
+            consZ_plot2d = consZ_np[::plot2d_every]
+            
+            # Forzar inclusión del punto final si no está ya incluido
+            if consZ_plot2d[-1] != consZ_np[-1]:
+                consSym_plot2d = list(consSym_plot2d) + [consSym_np[-1]]
+                consZ_plot2d = list(consZ_plot2d) + [consZ_np[-1]]
+        else:
+            consSym_plot2d = consSym_np
+            consZ_plot2d = consZ_np
+
+        save_constellations_grid(consSym_plot2d, consZ_plot2d, plots_p / "constelaciones.png")
         save_power_evolution(powZ_np, powW_np, plots_p / "potencia.png", unit="dBm")
+
+        # Calcular paso adaptativo para visualización 3D según longitud total del enlace
+        # Objetivo: mantener ~400 puntos para fluidez óptima
+        if len(consZ_np) > 1:
+            total_length_km = (consZ_np[-1] - consZ_np[0]) / 1000.0  # Longitud total en km
+            z_diff_m = abs(consZ_np[1] - consZ_np[0]) if len(consZ_np) > 1 else step_const_km * 1000
+            z_diff_km = z_diff_m / 1000.0  # Paso de captura real
+            
+            # Calcular paso adaptativo para tener ~400 puntos máximo
+            target_points = 400  # Número óptimo de puntos para visualización fluida
+            total_available_points = len(consZ_np)
+            
+            if total_available_points <= target_points:
+                # Si tenemos menos de 400 puntos, usamos todos
+                const3d_every_calculated = 1
+            else:
+                # Si tenemos más, calculamos el paso para llegar a ~400
+                const3d_every_calculated = max(1, int(round(total_available_points / target_points)))
+            
+            # Log para debug
+            actual_3d_points = total_available_points // const3d_every_calculated
+            print(f"[3D Adaptativo] Enlace: {total_length_km:.1f} km | "
+                  f"Capturados: {total_available_points} pts | "
+                  f"Every: {const3d_every_calculated} | "
+                  f"Visualizados: {actual_3d_points} pts")
+        else:
+            const3d_every_calculated = 1
 
         if do_const3d:
             save_constellations_3d(
@@ -321,7 +396,9 @@ def _execute(
             save_constellations_3d_html(
                 consSym_np, consZ_np,
                 plots_p / "constelaciones_3d.html",
-                every=const3d_every, pts_per_slice=const3d_html_pts, marker_size=2.0
+                every=const3d_every_calculated, pts_per_slice=const3d_html_pts, marker_size=2.0,
+                trace_symbols=trace_symbols, num_traces=num_traces,
+                group_by_quadrant=group_by_quadrant, show_slice_planes=show_slice_planes
             )
 
     if do_eye:
@@ -334,9 +411,12 @@ def _execute(
     if ber_print is None:
         ber_print = result.get("BER_post")
     ber_str = (f"{ber_print:.3e}" if isinstance(ber_print, (int, float)) and ber_print is not None else "n/a")
-    rprint(f"L = {result['Lcum_m']/1e3:.1f} km | G = {result['G_dB']:.1f} dB | elapsed = {elapsed:.3f} s "
-           f"| BER={ber_str} | SNRsym={snr_sym_db:.2f} dB"
-           + (f" | OSNR={osnr_final_db:.2f} dB" if osnr_final_db is not None else ""))
+    
+    # Mensaje simplificado: solo BER y OSNR (métricas ópticas relevantes)
+    msg = f"L = {result['Lcum_m']/1e3:.1f} km | G = {result['G_dB']:.1f} dB | elapsed = {elapsed:.3f} s | BER={ber_str}"
+    if osnr_final_db is not None:
+        msg += f" | OSNR={osnr_final_db:.2f} dB"
+    rprint(msg)
 
     return backend_info
 
@@ -353,14 +433,20 @@ def run(
     splice_db: float = typer.Option(0.2, help="Pérdida por fusión entre fibras en dB."),
     use_splice_loss: bool = typer.Option(True, help="Aplicar pérdida por fusión entre tramos."),
     do_const: bool = typer.Option(True, help="Capturar constelaciones durante la propagación."),
-    step_const_km: float = typer.Option(5.0, help="Paso entre capturas de constelación en km."),
+    step_const_km: float = typer.Option(0.5, help="Paso de captura de datos (fijo en 0.5 km)."),
+    step_plot2d_km: float = typer.Option(5.0, help="Paso para graficar constelaciones 2D en km."),
     do_eye: bool = typer.Option(True, help="Guardar eye diagram al final."),
     plots_dir: str = typer.Option("plots", help="Carpeta para imágenes."),
     do_const3d: bool = typer.Option(False, help="Guardar PNG 3D con matplotlib."),
     const3d_every: int = typer.Option(1, help="Usar 1 de cada N snapshots en 3D PNG."),
     const3d_pts: int = typer.Option(1000, help="Máx. puntos por snapshot para PNG 3D."),
     do_const3d_html: bool = typer.Option(True, help="Guardar 3D interactivo HTML con Plotly."),
+    step_const3d_km: float = typer.Option(0.5, help="Paso para visualización 3D (fijo en 0.5 km)."),
     const3d_html_pts: int = typer.Option(1200, help="Máx. puntos por snapshot para HTML 3D."),
+    trace_symbols: bool = typer.Option(True, help="Modo trayectorias (seguir símbolos individuales)."),
+    num_traces: int = typer.Option(50, help="Número de símbolos a seguir en modo trayectorias."),
+    group_by_quadrant: bool = typer.Option(True, help="Agrupar símbolos por cuadrante QPSK (mismo color)."),
+    show_slice_planes: bool = typer.Option(True, help="Mostrar planos semitransparentes en posiciones clave."),
 ):
     _execute(
         config=config,
@@ -373,13 +459,19 @@ def run(
         use_splice_loss=use_splice_loss,
         do_const=do_const,
         step_const_km=step_const_km,
+        step_plot2d_km=step_plot2d_km,
         do_eye=do_eye,
         plots_dir=plots_dir,
         do_const3d=do_const3d,
         const3d_every=const3d_every,
         const3d_pts=const3d_pts,
         do_const3d_html=do_const3d_html,
+        step_const3d_km=step_const3d_km,
         const3d_html_pts=const3d_html_pts,
+        trace_symbols=trace_symbols,
+        num_traces=num_traces,
+        group_by_quadrant=group_by_quadrant,
+        show_slice_planes=show_slice_planes,
     )
 
 if __name__ == "__main__":

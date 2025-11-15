@@ -1,0 +1,161 @@
+{
+  "date": "06-Nov-2025 11:29:09",
+  "elapsed_s": 7.836136817932129,
+  "global": {
+    "Rb": 32000000000.0,
+    "M": 4,
+    "sps": 8,
+    "Fs": 256000000000.0,
+    "Nsym": 16384,
+    "Ptx": 0.0001,
+    "mod": "QPSK",
+    "rx": "coh",
+    "pol": "sp"
+  },
+  "pulse": {
+    "type": "RRC",
+    "roll": 0.1,
+    "span": 10
+  },
+  "dsp": null,
+  "chain": [
+    {
+      "type": "edfa",
+      "par": {
+        "G_dB": 22.0,
+        "nsp": 1.58
+      }
+    },
+    {
+      "type": "fiber",
+      "par": {
+        "L": 80000.0,
+        "beta2": -2.1e-26,
+        "gamma": 0.0013,
+        "dz": 10.0,
+        "alpha": 4.605e-05
+      }
+    },
+    {
+      "type": "edfa",
+      "par": {
+        "G_dB": 16.0,
+        "nsp": 1.7
+      }
+    }
+  ],
+  "result": {
+    "status": "ok",
+    "notes": "RRC+SSFM; snapshots guardados si do_const=True",
+    "Lcum_m": 80000.0,
+    "G_dB": 38.0,
+    "Pmean_W": 3.955586868480013e-05,
+    "backend": "GPU CuPy - NVIDIA GeForce RTX 3060 Laptop GPU",
+    "elapsed_s": 7.836136817932129,
+    "delay_best_samp": 80,
+    "BER_est_BPSK": null,
+    "BER_post": 0.408111572265625,
+    "EVM_post_dB": 1.1612784910118705,
+    "Q_post": 1.2372317981068042,
+    "SNR_sym_dB": -1.122499007500939,
+    "OSNR_final_dB": null,
+    "Pout_dBm": -14.02789073522958,
+    "profile": [
+      {
+        "z_km": 0.0,
+        "P_dBm": -20.03277989488317,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 0.0,
+        "P_dBm": 1.97151797806163,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 5.0,
+        "P_dBm": 0.9715549334809459,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 10.0,
+        "P_dBm": -0.028408111099743276,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 15.0,
+        "P_dBm": -1.0283711556804294,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 20.0,
+        "P_dBm": -2.0283342002611158,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 25.0,
+        "P_dBm": -3.0282972448418044,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 30.0,
+        "P_dBm": -4.028260289422501,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 35.0,
+        "P_dBm": -5.028223334003204,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 40.0,
+        "P_dBm": -6.028186378583914,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 45.0,
+        "P_dBm": -7.0281494231646215,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 50.0,
+        "P_dBm": -8.02811246774533,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 55.0,
+        "P_dBm": -9.028075512326035,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 60.0,
+        "P_dBm": -10.028038556906747,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 65.0,
+        "P_dBm": -11.028001601487459,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 70.0,
+        "P_dBm": -12.027964646068167,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 75.0,
+        "P_dBm": -13.027927690648873,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 80.0,
+        "P_dBm": -14.02789073522958,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 80.0,
+        "P_dBm": 1.9726378867970844,
+        "OSNR_dB": null
+      }
+    ]
+  }
+}

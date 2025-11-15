@@ -1,13 +1,95 @@
 # src/fibersim/gui/app.py
 from __future__ import annotations
-import json, pathlib, uuid, math, io
+import json, pathlib, uuid, math, io, csv, copy, datetime
 from typing import Any, Dict, List
 import streamlit as st
 import streamlit.components.v1 as components
+import plotly.graph_objects as go
+import numpy as np
 
 # Modelos / ejecución del simulador
 from fibersim.schema import SimConfig, FiberBlock, EdfaBlock, FiberPar, EdfaPar
 from fibersim.main import _execute
+
+# ------------------------- Page Configuration -------------------------
+st.set_page_config(
+    page_title="FiberSim - Simulador de Enlaces de Fibra Óptica",
+    page_icon="🔬",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Custom CSS for professional styling
+st.markdown("""
+<style>
+    /* Main content area */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    
+    /* Headers */
+    h1, h2, h3 {
+        font-weight: 600;
+        letter-spacing: -0.02em;
+    }
+    
+    /* Metrics */
+    [data-testid="stMetricValue"] {
+        font-size: 1.8rem;
+        font-weight: 600;
+    }
+    
+    /* Remove extra spacing */
+    .element-container {
+        margin-bottom: 0.5rem;
+    }
+    
+    /* Info boxes */
+    .stAlert {
+        border-radius: 0.5rem;
+    }
+    
+    /* Buttons */
+    .stButton>button {
+        border-radius: 0.375rem;
+        font-weight: 500;
+        transition: all 0.2s;
+    }
+    
+    .stButton>button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    
+    /* Sidebar improvements */
+    [data-testid="stSidebar"] {
+        background-color: rgba(38, 39, 48, 0.05);
+    }
+    
+    [data-testid="stSidebar"] .element-container {
+        margin-bottom: 0.75rem;
+    }
+    
+    /* Sidebar title styling */
+    [data-testid="stSidebar"] h1 {
+        font-size: 1.5rem;
+        margin-bottom: 1rem;
+    }
+    
+    [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+        font-size: 1.1rem;
+        margin-top: 0.5rem;
+        margin-bottom: 0.75rem;
+    }
+    
+    /* Hacer selectbox más visible en sidebar */
+    [data-testid="stSidebar"] [data-baseweb="select"] > div {
+        background-color: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(250, 250, 250, 0.2);
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # ------------------------- utilidades -------------------------
 
@@ -58,89 +140,7 @@ def w_to_dbm(p_w: float) -> float:
 def dbm_to_w(dbm: float) -> float:
     return 1e-3 * (10.0 ** (dbm / 10.0))
 
-# ------------------------- presets -------------------------
-
-PRESETS: Dict[str, Dict[str, Any]] = {
-    "Demo 400 km DCF": {
-        "global": { "project": "Enlace 400 km con DCF", "Rb": 10e9, "M": 2, "sps": 8, "Fs": 80e9, "Nsym": 32768, "Ptx": 3.162e-5, "lambda_nm": 1550 },
-        "pulse":  { "type": "RRC", "roll": 0.2, "span": 8 },
-        "chain": [
-            { "type": "fiber", "par": { "L": 66000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } },
-            { "type": "fiber", "par": { "L": 14000.0, "beta2":  1.001e-25, "gamma": 0.0020, "dz": 1000.0, "alpha": 1.151e-4 } },
-            { "type": "edfa",  "par": { "G_dB": 21.2, "nsp": 1.6 } },
-
-            { "type": "fiber", "par": { "L": 66000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } },
-            { "type": "fiber", "par": { "L": 14000.0, "beta2":  1.001e-25, "gamma": 0.0020, "dz": 1000.0, "alpha": 1.151e-4 } },
-            { "type": "edfa",  "par": { "G_dB": 21.2, "nsp": 1.6 } },
-
-            { "type": "fiber", "par": { "L": 66000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } },
-            { "type": "fiber", "par": { "L": 14000.0, "beta2":  1.001e-25, "gamma": 0.0020, "dz": 1000.0, "alpha": 1.151e-4 } },
-            { "type": "edfa",  "par": { "G_dB": 21.2, "nsp": 1.6 } },
-
-            { "type": "fiber", "par": { "L": 66000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } },
-            { "type": "fiber", "par": { "L": 14000.0, "beta2":  1.001e-25, "gamma": 0.0020, "dz": 1000.0, "alpha": 1.151e-4 } },
-            { "type": "edfa",  "par": { "G_dB": 21.2, "nsp": 1.6 } },
-
-            { "type": "fiber", "par": { "L": 66000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } },
-            { "type": "fiber", "par": { "L": 14000.0, "beta2":  1.001e-25, "gamma": 0.0020, "dz": 1000.0, "alpha": 1.151e-4 } },
-            { "type": "edfa",  "par": { "G_dB": 21.2, "nsp": 1.6 } }
-        ]
-    },
-    "Demo 80 km SMF": {
-        "global": { "project": "Enlace 80 km SMF", "Rb": 10e9, "M": 2, "sps": 8, "Fs": 80e9, "Nsym": 16384, "Ptx": 1e-3, "lambda_nm": 1550 },
-        "pulse":  { "type": "RRC", "roll": 0.25, "span": 6 },
-        "chain":  [
-            { "type": "fiber", "par": { "L": 80000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } }
-        ]
-    },
-    "Demo 3 spans SMF+EDFA": {
-        "global": { "project": "3 spans SMF+EDFA", "Rb": 10e9, "M": 2, "sps": 8, "Fs": 80e9, "Nsym": 16384, "Ptx": 1e-3, "lambda_nm": 1550 },
-        "pulse":  { "type": "RRC", "roll": 0.25, "span": 6 },
-        "chain": [
-            { "type": "fiber", "par": { "L": 50000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } },
-            { "type": "edfa",  "par": { "G_dB": 10.0, "nsp": 1.6 } },
-            { "type": "fiber", "par": { "L": 50000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } },
-            { "type": "edfa",  "par": { "G_dB": 10.0, "nsp": 1.6 } },
-            { "type": "fiber", "par": { "L": 50000.0, "beta2": -2.127e-26, "gamma": 0.0013, "dz": 1000.0, "alpha": 4.605e-5 } }
-        ]
-    },
-    "Corning SMF-28e+": {
-        "global": { 
-            "project": "Enlace SMF-28e+ 100km", 
-            "Rb": 10e9, 
-            "M": 2, 
-            "sps": 8, 
-            "Fs": 80e9, 
-            "Nsym": 16384, 
-            "Ptx": 1e-3, 
-            "lambda_nm": 1550 
-        },
-        "pulse": { 
-            "type": "RRC", 
-            "roll": 0.25, 
-            "span": 6 
-        },
-        "chain": [
-            { 
-                "type": "fiber", 
-                "par": { 
-                    "L": 100000.0,           # 100 km
-                    "beta2": -2.17e-26,      # Dispersión típica ~17 ps/nm/km
-                    "gamma": 0.00107,        # Coeficiente no lineal típico
-                    "dz": 1000.0,
-                    "alpha": 4.343e-5        # Atenuación ~0.19 dB/km
-                } 
-            },
-            {
-                "type": "edfa",
-                "par": {
-                    "G_dB": 19.0,           # Compensación de pérdidas
-                    "nsp": 1.5              # Figure de ruido típica
-                }
-            }
-        ]
-    }
-}
+# ------------------------- descubrimiento de ejemplos -------------------------
 
 # Descubrir archivos JSON en examples/configs que validen contra el esquema
 def discover_example_files() -> Dict[str, Dict[str, Any]]:
@@ -200,8 +200,13 @@ if "last_backend" not in st.session_state:
 
 # ------------------------- carga / guardado y presets -------------------------
 
-st.sidebar.header("Configuración")
-upl = st.sidebar.file_uploader("Cargar JSON", type=["json"])
+# Título principal del sidebar
+st.sidebar.title("⚙️ Gestión de Configuración")
+st.sidebar.markdown("---")
+
+# Sección 1: Cargar configuración personalizada (expuesta directamente)
+st.sidebar.markdown("**Cargar Configuración**")
+upl = st.sidebar.file_uploader("Seleccionar archivo JSON", type=["json"], label_visibility="collapsed")
 if upl:
     try:
         cfg = SimConfig.model_validate(json.loads(upl.read().decode("utf-8")))
@@ -210,39 +215,67 @@ if upl:
         st.session_state.chain     = [b.model_dump() for b in cfg.chain]
         for b in st.session_state.chain: ensure_uid(b)
         st.session_state.edit_idx = None
-        st.sidebar.success("Configuración cargada")
+        st.sidebar.success("✅ Configuración cargada")
     except Exception as e:
-        st.sidebar.error(f"Error al cargar: {e}")
+        st.sidebar.error(f"❌ Error al cargar: {e}")
 
+st.sidebar.markdown("")
+
+# Sección 2: Guardar configuración actual
 def export_json() -> str:
     data = {"global": st.session_state["global"], "pulse": st.session_state["pulse"], "chain": st.session_state.chain}
     return json.dumps(data, indent=2)
 
-st.sidebar.download_button("Descargar JSON", data=export_json(), file_name="config.json", mime="application/json")
+def generate_unique_filename() -> str:
+    """Genera un nombre de archivo único y descriptivo basado en la configuración actual."""
+    # Extraer parámetros clave
+    gp = st.session_state["global"]
+    Rb_Gbps = float(gp.get("bit_rate", 1e9)) / 1e9
+    M_order = int(gp.get("M", 4))
+    
+    # Mapeo de modulación
+    mod_names = {2: "BPSK", 4: "QPSK", 16: "16QAM", 64: "64QAM"}
+    mod_name = mod_names.get(M_order, f"{M_order}QAM")
+    
+    # Calcular longitud total de fibra
+    total_length_km = sum(blk["par"]["L"] / 1000.0 for blk in st.session_state.chain if blk["type"] == "fiber")
+    
+    # Timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Formato: fibersim_MODULACION_XXGbps_YYYkm_TIMESTAMP.json
+    filename = f"fibersim_{mod_name}_{Rb_Gbps:.0f}Gbps_{total_length_km:.0f}km_{timestamp}.json"
+    
+    return filename
+
+st.sidebar.download_button(
+    "💾 Guardar Configuración Actual", 
+    data=export_json(), 
+    file_name=generate_unique_filename(), 
+    mime="application/json",
+    use_container_width=True,
+    help="Descarga la configuración actual como archivo JSON con nombre descriptivo automático"
+)
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("Ejemplos")
-preset_sel = st.sidebar.selectbox("Elegir ejemplo", options=list(PRESETS.keys()), index=0)
-if st.sidebar.button("Cargar ejemplo", use_container_width=True):
-    try:
-        raw = PRESETS[preset_sel]
-        cfg = SimConfig.model_validate(raw)
-        st.session_state["global"] = cfg.global_.model_dump()
-        st.session_state["pulse"]  = cfg.pulse.model_dump()
-        st.session_state.chain     = [b.model_dump() for b in cfg.chain]
-        for b in st.session_state.chain: ensure_uid(b)
-        st.session_state.edit_idx = None
-        st.sidebar.success("Ejemplo cargado")
-    except Exception as e:
-        st.sidebar.error(f"No se pudo cargar: {e}")
 
-# Ejemplos desde archivos en examples/configs
+# Sección 3: Enlaces de ejemplo
+st.sidebar.subheader("Enlaces de Ejemplo")
+
 files_map = discover_example_files()
 if files_map:
-    st.sidebar.markdown("Ejemplos desde archivos")
     file_opts = sorted(files_map.keys())
-    file_sel = st.sidebar.selectbox("Elegir archivo", options=file_opts, index=0, key="ex_file_sel")
-    if st.sidebar.button("Cargar desde archivo", use_container_width=True, key="btn_load_file_ex"):
+    
+    # Selector con mejor presentación
+    file_sel = st.sidebar.selectbox(
+        "Seleccionar configuración de ejemplo",
+        options=file_opts,
+        index=0,
+        help="Ejemplos validados y listos para simular"
+    )
+    
+    # Botón para cargar
+    if st.sidebar.button("🚀 Cargar Ejemplo", use_container_width=True, type="primary"):
         try:
             raw = files_map[file_sel]
             cfg = SimConfig.model_validate(raw)
@@ -251,92 +284,243 @@ if files_map:
             st.session_state.chain     = [b.model_dump() for b in cfg.chain]
             for b in st.session_state.chain: ensure_uid(b)
             st.session_state.edit_idx = None
-            st.sidebar.success(f"Ejemplo '{file_sel}' cargado")
+            st.sidebar.success(f"✅ '{file_sel}' cargado exitosamente")
         except Exception as e:
-            st.sidebar.error(f"No se pudo cargar archivo: {e}")
+            st.sidebar.error(f"❌ Error al cargar: {e}")
+else:
+    st.sidebar.info("ℹ️ No se encontraron archivos de ejemplo en `examples/configs/`")
 
 # ------------------------- parámetros simples y robustos -------------------------
 
-st.title("FiberSim - Construcción de enlace")
+st.title("FiberSim | Simulador de Enlaces de Fibra Óptica")
+st.markdown("---")
 
 gcol, pcol = st.columns(2)
 
 with gcol:
-    st.subheader("Parámetros globales")
+    st.markdown("### Parámetros Globales")
 
     g = st.session_state["global"]
 
     # Entrada en Gbaud para evitar números enormes y minimizar errores
-    Rb_gbaud = st.number_input("Rb [Gbaud]", value=float(g.get("Rb", 10e9)) / 1e9, min_value=0.1, step=0.1, format="%.2f")
+    col1, col2 = st.columns(2)
+    with col1:
+        Rb_gbaud = st.number_input(
+            "Tasa de Símbolos", 
+            value=float(g.get("Rb", 10e9)) / 1e9, 
+            min_value=0.1, 
+            step=0.1, 
+            format="%.2f",
+            help="Tasa de símbolos en Gbaud (GSymbolos/s)"
+        )
+    with col2:
+        st.metric("Gbaud", f"{Rb_gbaud:.2f}")
+    
     # Potencia en dBm, convertimos internamente a W
     pt_dbm_default = w_to_dbm(float(g["Ptx"]))
-    Ptx_dBm = st.number_input("Potencia Tx [dBm]", value=float(pt_dbm_default), step=0.1, format="%.2f")
+    col1, col2 = st.columns(2)
+    with col1:
+        Ptx_dBm = st.number_input(
+            "Potencia TX", 
+            value=float(pt_dbm_default), 
+            step=0.1, 
+            format="%.2f",
+            help="Potencia óptica de transmisión en dBm"
+        )
+    with col2:
+        st.metric("dBm", f"{Ptx_dBm:.2f}")
 
-    # Calidad controla Nsym. sps se fija a 8 en modo simple.
-    calidad = st.selectbox("Calidad de simulación", ["Rápida", "Media", "Alta"], index=1,
-                           help="Ajusta Nsym. Rápida=8192, Media=16384, Alta=32768")
-
-    # Avanzado opcional
-    with st.expander("Opciones avanzadas"):
-        sps_adv = st.number_input("sps", value=int(g.get("sps", 8)), min_value=2, step=1)
-        nsym_adv = st.number_input("N símbolos", value=int(g.get("Nsym", 16384)), min_value=1024, step=1024)
-        lambda_nm = st.number_input("Longitud de onda [nm]", value=float(g.get("lambda_nm", 1550.0)),
-                                    min_value=1200.0, max_value=1650.0, step=1.0)
-        # Selección compacta por orden M, mapeamos a nombre de modulación
-        M_now = int(g.get("M", {"BPSK":2, "QPSK":4, "16QAM":16}.get(str(g.get("mod","BPSK")), 2)))
-        M_sel = st.selectbox("Orden de modulación M", [2,4,16], index=[2,4,16].index(M_now))
-        mod_map = {2: "BPSK", 4: "QPSK", 16: "16QAM"}
-        mod_sel = mod_map.get(int(M_sel), "BPSK")
-        # Enforzar receptor coherente si M>2
-        if int(M_sel) > 2:
-            rx_sel = "coh"
-            st.caption("Para QPSK/16QAM se requiere receptor coherente (forzado a 'coh').")
-        else:
-            rx_sel = st.selectbox("Receptor", ["imdd","coh"], index=["imdd","coh"].index(str(g.get("rx","imdd"))))
-        usar_avanzado = st.checkbox("Usar estos valores avanzados", value=False)
-
-    # Aplicar reglas robustas
-    if usar_avanzado:
-        g["sps"] = int(max(2, sps_adv))
-        g["Nsym"] = int(nsym_adv)
-        g["lambda_nm"] = float(lambda_nm)
-        g["mod"] = mod_sel
-        g["M"] = {"BPSK": 2, "QPSK": 4, "16QAM": 16}.get(mod_sel, 2)
-        g["rx"] = rx_sel
+    # Calidad controla Nsym
+    calidad = st.selectbox(
+        "Calidad de Simulación", 
+        ["Rápida", "Media", "Alta"], 
+        index=1,
+        help="Controla el número de símbolos: Rápida=8192, Media=16384, Alta=32768"
+    )
+    
+    # Modulación
+    mod_map_display = {2: "2 - BPSK", 4: "4 - QPSK", 16: "16 - 16QAM"}
+    mod_map_value = {"2 - BPSK": 2, "4 - QPSK": 4, "16 - 16QAM": 16}
+    
+    M_now = int(g.get("M", 2))
+    M_display_now = mod_map_display[M_now]
+    
+    M_display_sel = st.selectbox(
+        "Orden de Modulación", 
+        ["2 - BPSK", "4 - QPSK", "16 - 16QAM"],
+        index=["2 - BPSK", "4 - QPSK", "16 - 16QAM"].index(M_display_now),
+        help="Esquema de modulación digital: BPSK (1 bit/símbolo), QPSK (2 bits/símbolo), 16-QAM (4 bits/símbolo)"
+    )
+    
+    M_sel = mod_map_value[M_display_sel]
+    
+    # Receptor (solo si BPSK)
+    if M_sel == 2:
+        rx_sel = st.selectbox(
+            "Tipo de Receptor", 
+            ["imdd", "coh"], 
+            index=["imdd", "coh"].index(str(g.get("rx", "imdd"))),
+            help="IMDD: Detección directa (solo intensidad) | COH: Coherente (preserva fase)"
+        )
     else:
-        g["sps"] = 8
-        g["Nsym"] = {"Rápida": 8192, "Media": 16384, "Alta": 32768}[calidad]
-        g["lambda_nm"] = float(g.get("lambda_nm", 1550.0))
-        # Defaults simples
-        g.setdefault("mod", "BPSK")
-        g.setdefault("M", 2)
-        # Para BPSK permitir IMDD por defecto, si el usuario luego cambia M en avanzado se forzará coh
-        g.setdefault("rx", "imdd")
+        rx_sel = "coh"
+        st.caption("QPSK/16-QAM requieren receptor coherente (automático)")
+    
+    # Longitud de onda
+    lambda_nm = st.number_input(
+        "Longitud de Onda [nm]", 
+        value=float(g.get("lambda_nm", 1550.0)),
+        min_value=1200.0, 
+        max_value=1650.0, 
+        step=1.0,
+        help="Longitud de onda óptica. Estándar banda C: 1530-1565 nm. Afecta cálculos de ASE y dispersión cromática."
+    )
+
+    # Aplicar valores
+    g["sps"] = 8  # Fijo
+    g["Nsym"] = {"Rápida": 8192, "Media": 16384, "Alta": 32768}[calidad]
+    g["lambda_nm"] = float(lambda_nm)
+    g["M"] = M_sel
+    g["mod"] = {2: "BPSK", 4: "QPSK", 16: "16QAM"}[M_sel]
+    g["rx"] = rx_sel
 
     g["Rb"] = float(Rb_gbaud) * 1e9
-    # Derivado de la modulación para PRBS (si M está dado explícitamente prevalece)
-    g["M"] = int(g.get("M", {"BPSK": 2, "QPSK": 4, "16QAM": 16}.get(str(g.get("mod","BPSK")), 2)))
-    # Mantener consistencia entre M y mod
-    g["mod"] = {2: "BPSK", 4: "QPSK", 16: "16QAM"}.get(int(g.get("M", 2)), str(g.get("mod","BPSK")))
-    # Enforzar coherente si M>2
-    if int(g["M"]) > 2:
-        g["rx"] = "coh"
+    
+    # Fs = Rb × sps (oversampling intencional, NO es un bug)
+    # Esto da más resolución al DSP y mejora la calidad de la simulación
     g["Fs"] = float(g["Rb"]) * int(g["sps"])
+    
+    # Calcular Rs solo para mostrar info
+    Rs = float(g["Rb"]) / np.log2(int(g["M"]))  # Symbol rate
+    
     g["Ptx"] = float(dbm_to_w(Ptx_dBm))
 
-    st.caption(f"Fs derivada: {g['Fs']/1e9:.3f} GHz   |   Ptx: {Ptx_dBm:.2f} dBm")
+    st.caption(f"Tasa de Muestreo: {g['Fs']/1e9:.3f} GS/s (Rb={g['Rb']/1e9:.3f} Gbps × sps={g['sps']})  |  Potencia TX: {Ptx_dBm:.2f} dBm ({g['Ptx']*1000:.3f} mW)")
+
+def _generate_rrc_pulse(beta: float, span: int, sps: int = 8) -> tuple:
+    """Genera pulso RRC para visualización en tiempo real"""
+    N = span * sps
+    t = np.arange(-N / 2, N / 2 + 1, dtype=np.float64) / sps
+    taps = np.zeros_like(t)
+    for i, ti in enumerate(t):
+        if abs(ti) < 1e-12:
+            taps[i] = 1.0 + beta * (4 / np.pi - 1)
+        elif abs(abs(4 * beta * ti) - 1.0) < 1e-12:
+            taps[i] = (beta / np.sqrt(2)) * (
+                (1 + 2 / np.pi) * np.sin(np.pi / (4 * beta))
+                + (1 - 2 / np.pi) * np.cos(np.pi / (4 * beta))
+            )
+        else:
+            num = np.sin(np.pi * ti * (1 - beta)) + 4 * beta * ti * np.cos(np.pi * ti * (1 + beta))
+            den = np.pi * ti * (1 - (4 * beta * ti) ** 2)
+            taps[i] = num / den
+    # Normalización de energía
+    taps = taps / np.sqrt(np.sum(taps**2))
+    return t, taps
 
 with pcol:
-    st.subheader("Pulso")
-    p = st.session_state["pulse"]
-    p["type"] = "RRC"
-    p["roll"] = st.slider("roll-off", min_value=0.05, max_value=0.50, value=float(p.get("roll", 0.2)), step=0.01)
-    p["span"] = st.slider("span [símbolos]", min_value=4, max_value=12, value=int(p.get("span", 8)), step=1)
+    st.markdown("### Conformación de Pulso")
+    
+    # Sliders en la columna izquierda
+    col_sliders, col_plot = st.columns([1, 1])
+    
+    with col_sliders:
+        p = st.session_state["pulse"]
+        p["type"] = "RRC"
+        p["roll"] = st.slider(
+            "Factor Roll-off (β)", 
+            min_value=0.01, 
+            max_value=1.0, 
+            value=float(p.get("roll", 0.2)), 
+            step=0.01,
+            help="Parámetro de exceso de ancho de banda. BW = Rs × (1 + β)"
+        )
+        p["span"] = st.slider(
+            "Ancho del Filtro (símbolos)", 
+            min_value=4, 
+            max_value=20, 
+            value=int(p.get("span", 8)), 
+            step=1,
+            help="Duración del pulso en períodos de símbolo"
+        )
+    
+    # Gráfico interactivo en la columna derecha
+    with col_plot:
+        # Generar pulso RRC con parámetros actuales
+        t_pulse, h_pulse = _generate_rrc_pulse(
+            beta=p["roll"], 
+            span=p["span"], 
+            sps=8
+        )
+        
+        # Crear gráfico con Plotly
+        fig_pulse = go.Figure()
+        
+        # Línea del pulso
+        fig_pulse.add_trace(go.Scatter(
+            x=t_pulse, 
+            y=h_pulse,
+            mode='lines',
+            name='Pulso RRC',
+            line=dict(color='#1f77b4', width=2.5),
+            fill='tozeroy',
+            fillcolor='rgba(31, 119, 180, 0.15)',
+            hovertemplate='t = %{x:.2f} Ts<br>h(t) = %{y:.3f}<extra></extra>'
+        ))
+        
+        # Marcar los instantes de símbolo (cruces por cero de ISI)
+        symbol_times = np.arange(-p["span"]//2, p["span"]//2 + 1)
+        symbol_values = np.interp(symbol_times, t_pulse, h_pulse)
+        
+        fig_pulse.add_trace(go.Scatter(
+            x=symbol_times,
+            y=symbol_values,
+            mode='markers',
+            name='Instantes símbolo',
+            marker=dict(color='#d62728', size=7, symbol='cross', line=dict(width=1.5)),
+            hovertemplate='Símbolo %{x}<br>ISI = %{y:.4f}<extra></extra>'
+        ))
+        
+        # Configuración del layout
+        fig_pulse.update_layout(
+            title=dict(
+                text=f"<b>Pulso RRC</b>  β={p['roll']:.2f}, span={p['span']}",
+                font=dict(size=13),
+                x=0.5,
+                xanchor='center'
+            ),
+            xaxis_title="Tiempo (T<sub>símbolo</sub>)",
+            yaxis_title="Amplitud",
+            height=280,
+            margin=dict(l=45, r=20, t=45, b=40),
+            showlegend=False,
+            hovermode='closest',
+            template='plotly_white',
+            plot_bgcolor='rgba(240,240,240,0.3)'
+        )
+        
+        fig_pulse.update_xaxes(
+            gridcolor='rgba(200,200,200,0.4)',
+            zeroline=True,
+            zerolinewidth=1.5,
+            zerolinecolor='black',
+            range=[-p["span"]/2 - 1, p["span"]/2 + 1]
+        )
+        
+        fig_pulse.update_yaxes(
+            gridcolor='rgba(200,200,200,0.4)',
+            zeroline=True,
+            zerolinewidth=1.5,
+            zerolinecolor='black'
+        )
+        
+        # Mostrar gráfico (key único para forzar actualización)
+        st.plotly_chart(fig_pulse, use_container_width=True, key=f"pulse_viz_{p['roll']:.3f}_{p['span']}")
 
+st.markdown("---")
 # ------------------------- cadena (builder) -------------------------
 
-st.divider()
-st.subheader("Cadena de bloques")
+st.markdown("### Configuración de la Cadena del Enlace")
 
 c1, c2, c3 = st.columns([1,1,2])
 with c1:
@@ -425,25 +609,273 @@ if ei is not None and 0 <= ei < len(st.session_state.chain):
 # ------------------------- ejecución -------------------------
 
 st.divider()
-st.subheader("Ejecución")
+st.markdown("### Control de Simulación")
 
-colA, colB, colC = st.columns(3)
-with colA: gpu = st.toggle("Usar GPU CuPy", value=True)
-with colB: dz_override = st.number_input("Override dz global [m] (opcional)", value=10.0, min_value=0.1, step=0.1)
-with colC: step_const_km = st.number_input("Paso constelación [km]", value=5.0, min_value=0.5, step=0.5)
+colA, colB = st.columns(2)
+with colA: 
+    gpu = st.toggle("Usar GPU CuPy", value=True)
+with colB: 
+    use_dz_override = st.checkbox(
+        "Forzar dz global (sobrescribe config)", 
+        value=False,
+        help="CRÍTICO: El paso SSFM (dz) afecta dramáticamente el tiempo de ejecución. Valores pequeños (~1m) = alta precisión pero MUY lento. Valores grandes (~100m) = rápido pero menos preciso."
+    )
+    if use_dz_override:
+        st.warning("ADVERTENCIA: dz bajo (<10 m) puede tardar horas en enlaces largos")
+        dz_override = st.number_input(
+            "Paso SSFM [m]", 
+            value=100.0,  # Valor por defecto cambiado de 1.0 a 100.0
+            min_value=1.0, 
+            max_value=2000.0, 
+            step=10.0,
+            help="Tamaño de paso SSFM. Rápido: 100-500m | Balance: 10-100m | Preciso: 1-10m"
+        )
+    else:
+        dz_override = None
 
-col1, col2, col3, col4 = st.columns(4)
+# Paso fijo de captura (no visible para el usuario)
+step_const_km = 0.5  # Siempre captura cada 0.5 km
+
+col1, col2, col3, col4, col5 = st.columns(5)
 with col1: insertion_db = st.number_input("Inserción [dB]", value=1.0, step=0.1)
 with col2: splice_db    = st.number_input("Fusión [dB]", value=0.2, step=0.1)
 with col3: do_const     = st.checkbox("Constelaciones", value=True)
 with col4: do_eye       = st.checkbox("Eye final", value=True)
+with col5: 
+    step_plot2d_km = st.number_input("Graficar 2D cada [km]", value=5.0, min_value=0.5, step=0.5,
+                                    help="Cada cuántos km graficar constelaciones 2D. Captura siempre cada 0.5 km.")
 
-colh1, colh2 = st.columns(2)
-with colh1: do_const3d_html = st.checkbox("3D interactivo HTML", value=True)
-with colh2: const3d_html_pts = st.slider("Puntos por snapshot 3D", min_value=100, max_value=400, value=200, step=10)
+st.markdown("##### Visualización 3D de Constelaciones")
+
+# Calcular valores recomendados según la modulación
+M_order = int(M_sel)  # 2, 4, o 16
+if M_order == 2:  # BPSK
+    recommended_traces = 15
+    min_traces = 10
+    constellation_regions = 2  # Solo 2 puntos (±1)
+elif M_order == 4:  # QPSK
+    recommended_traces = 32  # 8 por cuadrante para buena cobertura
+    min_traces = 20
+    constellation_regions = 4  # 4 cuadrantes
+else:  # 16-QAM
+    recommended_traces = 64  # 4 por región para 16 puntos
+    min_traces = 40
+    constellation_regions = 16  # 16 puntos en la constelación
+
+# Mapa de nombres de modulación
+mod_map = {2: "BPSK", 4: "QPSK", 16: "16-QAM"}
+
+# Configuración 3D - siempre activado
+trace_symbols = True
+do_const3d_html = True
+step_const3d_km = 0.5  # Siempre usa paso de captura
+const3d_html_pts = None  # Se calculará como num_traces
+
+colh4, colh5 = st.columns(2)
+with colh4:
+    num_traces = st.slider(
+        "Número de símbolos a seguir", 
+        min_value=min_traces, 
+        max_value=200, 
+        value=recommended_traces, 
+        step=5,
+        help=f"Mínimo recomendado para {mod_map[M_order]}: {recommended_traces} símbolos "
+             f"(para cubrir las {constellation_regions} regiones de la constelación). "
+             f"Menos símbolos pueden dejar regiones sin representar."
+    )
+    
+    # Advertencia si el número es muy bajo
+    if num_traces < recommended_traces:
+        st.warning(f"ADVERTENCIA: Con {num_traces} símbolos puede que no se cubran todas las regiones "
+                  f"de la constelación {mod_map[M_order]} ({constellation_regions} puntos). "
+                  f"Recomendado: >={recommended_traces}")
+
+with colh5:
+    # Adaptar el texto del agrupamiento según la modulación
+    if M_order == 2:  # BPSK
+        group_label = "Agrupar por fase (±1)"
+        group_help = "Agrupa símbolos por su fase (positivo/negativo) con colores diferentes."
+    elif M_order == 4:  # QPSK
+        group_label = "Agrupar por cuadrante QPSK"
+        group_help = "Agrupa símbolos por cuadrante (4 regiones) con colores diferentes para facilitar interpretación."
+    else:  # 16-QAM
+        group_label = "Agrupar por región 16-QAM"
+        group_help = "Agrupa símbolos por su región en la constelación 16-QAM (16 puntos agrupados por cercanía)."
+    
+    group_by_quadrant = st.checkbox(group_label, value=True, help=group_help)
 
 plots_dir = st.text_input("Carpeta de plots", value="plots")
 outdir    = st.text_input("Carpeta de logs", value="logs")
+
+# ========== VALIDACIÓN OPCIONAL DE PARÁMETROS (COLAPSABLE) ==========
+with st.expander("🔍 Validar Configuración (opcional)", expanded=False):
+    st.caption("Validación básica de parámetros físicos antes de ejecutar. "
+              "Son sugerencias, no restricciones. El simulador es un playground experimental.")
+    
+    # Extraer parámetros globales
+    gp = st.session_state["global"]
+    Rb = float(gp.get("bit_rate", 1e9))
+    M_order = int(gp.get("M", 4))
+    sps = int(gp.get("sps", 8))
+    Fs = float(gp.get("Fs", Rb * sps / np.log2(M_order)))
+    Ptx_W = float(gp.get("Ptx", 1.0))  # Potencia en Watts
+    Ptx_mW = Ptx_W * 1000  # Convertir a mW
+    Ptx_dBm = 10 * np.log10(Ptx_mW)
+
+    Rs = Rb / np.log2(M_order)  # Symbol rate
+
+    # Calcular longitud total y DCF ratio
+    total_fiber_length_km = 0
+    total_smf_length_km = 0
+    total_dcf_length_km = 0
+    total_disp_smf = 0
+    total_disp_dcf = 0
+
+    for blk in st.session_state.chain:
+        if blk["type"] == "fiber":
+            L_km = blk["par"]["L"] / 1000.0
+            total_fiber_length_km += L_km
+            
+            # Detectar tipo de fibra por dispersión
+            D = blk["par"].get("D", 0)
+            if D > 0:  # SMF
+                total_smf_length_km += L_km
+                total_disp_smf += D * L_km
+            elif D < 0:  # DCF
+                total_dcf_length_km += L_km
+                total_disp_dcf += abs(D * L_km)
+
+    # Calcular DCF compensation ratio
+    if total_disp_smf > 0 and total_disp_dcf > 0:
+        dcf_ratio = total_disp_dcf / total_disp_smf
+    else:
+        dcf_ratio = 0
+
+    # Extraer gamma y nsp promedio
+    gamma_avg = 0
+    nsp_avg = 0
+    num_fibers = 0
+    num_edfas = 0
+
+    for blk in st.session_state.chain:
+        if blk["type"] == "fiber":
+            gamma_avg += abs(blk["par"].get("gamma", 0))
+            num_fibers += 1
+        elif blk["type"] == "edfa":
+            nsp_avg += blk["par"].get("nsp", 1.0)
+            num_edfas += 1
+
+    if num_fibers > 0:
+        gamma_avg /= num_fibers
+    if num_edfas > 0:
+        nsp_avg /= num_edfas
+
+    # Validaciones
+    validation_warnings = []
+    validation_errors = []
+    validation_ok = []
+
+    # 1. Validación de Ptx
+    if Ptx_dBm < -10:
+        validation_errors.append(f"Potencia de transmisión muy baja: {Ptx_dBm:.1f} dBm ({Ptx_mW:.3f} mW). "
+                                f"El enlace estará dominado por ruido térmico/ASE. Mínimo recomendado: 0 dBm (1 mW).")
+    elif Ptx_dBm < 0:
+        validation_warnings.append(f"Potencia de transmisión baja: {Ptx_dBm:.1f} dBm ({Ptx_mW:.3f} mW). "
+                                  f"Puede tener alto BER. Recomendado: 0-10 dBm.")
+    else:
+        validation_ok.append(f"Potencia de transmisión: {Ptx_dBm:.1f} dBm ({Ptx_mW:.1f} mW)")
+
+    # 2. Validación de Fs
+    # Nota: Este simulador usa Fs = Rb × sps (oversampling intencional)
+    # Esto proporciona mayor resolución en DSP que el mínimo teórico Fs = Rs × sps
+    Fs_min_theoretical = Rs * sps  # Mínimo teórico (Nyquist en símbolos)
+    
+    if Fs < Fs_min_theoretical * 0.95:  # Fs muy bajo: riesgo de aliasing
+        validation_errors.append(f"Frecuencia de muestreo muy baja: Fs={Fs/1e9:.3f} GS/s < mínimo={Fs_min_theoretical/1e9:.3f} GS/s. "
+                                f"RIESGO DE ALIASING.")
+    else:
+        oversampling_factor = Fs / Fs_min_theoretical
+        validation_ok.append(f"Frecuencia de muestreo: {Fs/1e9:.3f} GS/s ({oversampling_factor:.1f}× oversampling intencional)")
+
+    # 3. Validación de DCF compensation
+    if total_dcf_length_km > 0:
+        if 0.95 <= dcf_ratio <= 1.05:
+            validation_ok.append(f"Compensación DCF perfecta: ratio={dcf_ratio:.3f} (dispersión residual ~0)")
+        elif 0.80 <= dcf_ratio <= 1.20:
+            validation_warnings.append(f"Compensación DCF parcial: ratio={dcf_ratio:.3f}. "
+                                      f"Habrá dispersión residual. Óptimo: 0.95-1.05")
+        else:
+            validation_errors.append(f"Compensación DCF muy desbalanceada: ratio={dcf_ratio:.3f}. "
+                                    f"SMF: {total_disp_smf:.1f} ps/nm, DCF: {total_disp_dcf:.1f} ps/nm. "
+                                    f"Ratio óptimo: ~1.0 (típicamente 5:1 en longitud SMF:DCF)")
+
+    # 4. Validación de efectos no lineales
+    if gamma_avg > 1e-5:  # Si hay gamma significativo (>0.01 /W/km)
+        # Advertir si Ptx >= 5 dBm (3.16 mW) con enlaces largos
+        if Ptx_dBm >= 10:  # Potencia muy alta
+            validation_warnings.append(f"Potencia de lanzamiento alta: Ptx={Ptx_dBm:.1f} dBm con gamma={gamma_avg:.3e} /W/m. "
+                                      f"Efectos no lineales (SPM/XPM/FWM) serán significativos y degradarán la señal. "
+                                      f"Considere reducir Ptx a 0-5 dBm para enlaces largos.")
+        elif Ptx_dBm >= 5:  # Potencia moderada-alta
+            validation_warnings.append(f"Potencia de lanzamiento moderada-alta: Ptx={Ptx_dBm:.1f} dBm con gamma={gamma_avg:.3e} /W/m. "
+                                      f"Pueden aparecer efectos no lineales (SPM/XPM). "
+                                      f"Monitoree la calidad de la constelación.")
+    else:
+        # Si gamma ≈ 0, la potencia alta no es problema (fibra ideal)
+        if Ptx_dBm >= 15:
+            validation_warnings.append(f"Potencia muy alta: Ptx={Ptx_dBm:.1f} dBm. "
+                                      f"Aunque gamma≈0, verifique que los amplificadores no saturen.")
+
+    # 5. Validación de ASE noise
+    if nsp_avg > 2.5:
+        validation_warnings.append(f"Factor de ruido alto: nsp={nsp_avg:.2f}. "
+                                  f"EDFAs con ruido elevado, BER estará limitado por ASE. Típico: 1.5-2.0")
+    else:
+        validation_ok.append(f"Factor de ruido EDFA: nsp={nsp_avg:.2f} (aceptable)")
+
+    # 6. Validación de longitud del enlace
+    if total_fiber_length_km > 1000:
+        validation_warnings.append(f"Enlace muy largo: {total_fiber_length_km:.0f} km. "
+                                  f"La simulación puede tardar horas y usar mucha memoria GPU.")
+    elif total_fiber_length_km > 500:
+        validation_warnings.append(f"Enlace largo: {total_fiber_length_km:.0f} km. "
+                                  f"Tiempo de simulación elevado.")
+    else:
+        validation_ok.append(f"Longitud de enlace: {total_fiber_length_km:.1f} km")
+
+    # 7. Validación de dz vs longitud (si está forzado)
+    if use_dz_override and dz_override is not None:
+        num_steps = (total_fiber_length_km * 1000) / dz_override
+        if num_steps > 100000:
+            validation_errors.append(f"Paso SSFM muy pequeño: dz={dz_override:.1f} m requiere {num_steps:.0f} pasos "
+                                    f"para {total_fiber_length_km:.0f} km. Esto puede tardar HORAS. "
+                                    f"Recomendado: dz >= {total_fiber_length_km * 1000 / 50000:.0f} m (50k pasos)")
+        elif num_steps > 50000:
+            validation_warnings.append(f"Paso SSFM pequeño: dz={dz_override:.1f} m requiere {num_steps:.0f} pasos. "
+                                      f"Simulación lenta (>30 min posible).")
+        else:
+            validation_ok.append(f"Paso SSFM: dz={dz_override:.1f} m ({num_steps:.0f} pasos, tiempo razonable)")
+
+    # Mostrar resultados de validación
+    if validation_errors:
+        st.error("Sugerencias críticas:")
+        for err in validation_errors:
+            st.error(f"• {err}")
+
+    if validation_warnings:
+        st.warning("Advertencias:")
+        for warn in validation_warnings:
+            st.warning(f"• {warn}")
+
+    if validation_ok:
+        st.success("Parámetros dentro de rangos típicos:")
+        for ok in validation_ok:
+            st.success(f"• {ok}")
+    
+    if not validation_errors and not validation_warnings and not validation_ok:
+        st.info("Ejecuta la validación expandiendo esta sección.")
+
+st.markdown("---")
 
 if st.button("Ejecutar simulación", type="primary"):
     try:
@@ -465,17 +897,23 @@ if st.button("Ejecutar simulación", type="primary"):
                 config=str(tmp),
                 outdir=outdir,
                 gpu=bool(gpu),
-                dz=float(dz_override),
+                dz=float(dz_override) if dz_override is not None else None,
                 insertion_db=float(insertion_db),
                 use_insertion_loss=True,
                 splice_db=float(splice_db),
                 use_splice_loss=True,
                 do_const=bool(do_const),
                 step_const_km=float(step_const_km),
+                step_plot2d_km=float(step_plot2d_km),
                 do_eye=bool(do_eye),
                 plots_dir=plots_dir,
                 do_const3d=False, const3d_every=1, const3d_pts=1000,
-                do_const3d_html=bool(do_const3d_html), const3d_html_pts=int(const3d_html_pts),
+                do_const3d_html=bool(do_const3d_html),
+                step_const3d_km=float(step_const3d_km),
+                const3d_html_pts=int(num_traces if trace_symbols else const3d_html_pts),
+                trace_symbols=bool(trace_symbols),
+                num_traces=int(num_traces if trace_symbols else 50),
+                group_by_quadrant=bool(group_by_quadrant),
             )
             st.session_state["last_backend"] = backend_info
             st.success("Simulación terminada")
@@ -525,14 +963,25 @@ def build_profile_from_state(Bo_Hz: float = 12.5e9) -> List[Dict[str, Any]]:
         else:
             prof.append({"i": i, "kind": t, "z_km": z_m/1e3, "P_dBm": _W_to_dBm(P_sig_W),
                          "OSNR_dB": None if P_ase_W <= 0 else 10*math.log10(P_sig_W/max(P_ase_W,1e-30))})
-    # BER aproximada por punto (BPSK)
+    
+    # BER aproximada por punto (BPSK) - NOTA: Solo considera ruido ASE
+    # Esta es una estimación teórica que NO incluye efectos no lineales,
+    # dispersión, timing jitter, etc. Para BER real, usar SNR medido post-DSP
     from math import erfc, sqrt
     Rb = float(g["Rb"])
     for pt in prof:
         osnr = pt.get("OSNR_dB", None)
-        if osnr is None: pt["BER"] = None; continue
-        OSNR_lin = 10.0**(osnr/10.0); SNR_lin = OSNR_lin * (Bo_Hz / max(Rb, 1.0))
-        pt["BER"] = 0.5 * erfc(sqrt(max(SNR_lin,1e-12))/sqrt(2.0))
+        if osnr is None: 
+            pt["BER_theoretical"] = None
+            continue
+        
+        # Conversión OSNR → SNR teórico (puede sobreestimar performance)
+        OSNR_lin = 10.0**(osnr/10.0)
+        SNR_lin = OSNR_lin * (Bo_Hz / max(Rb, 1.0))
+        pt["BER_theoretical"] = 0.5 * erfc(sqrt(max(SNR_lin,1e-12))/sqrt(2.0))
+        
+        # Mantener compatibilidad
+        pt["BER"] = pt["BER_theoretical"]
     return prof
 
 def _profile_to_csv_bytes(profile: List[Dict[str, Any]]) -> bytes:
@@ -551,7 +1000,7 @@ png2 = plots_p / "potencia.png"
 eye  = plots_p / "eye.png"
 
 st.divider()
-st.subheader("Resultados")
+st.markdown("### Resultados de la Simulación")
 
 # ---------- Resumen superior (chips + métricas) ----------
 log = _read_last_log(outdir)
@@ -561,15 +1010,32 @@ res = (log or {}).get("result", {}) if log else {}
 chips = []
 bk = st.session_state.get("last_backend") or res.get("backend")
 if bk: chips.append(f"<span class='meta-chip'>Backend: {bk}</span>")
+
+# Obtener métricas
 ber = res.get("BER_est_BPSK", None)
 if ber is None:
     ber = res.get("BER_post", None)
+osnr = res.get("OSNR_final_dB", None)
+
+# Mostrar solo métricas ópticas relevantes
 if ber is not None:
     chips.append(f"<span class='meta-chip'>BER: {float(ber)*100:.4f}%</span>")
-snr = res.get("SNR_sym_dB", None)
-if snr is not None: chips.append(f"<span class='meta-chip'>SNR símbolo: {snr:.2f} dB</span>")
-osnr = res.get("OSNR_final_dB", None)
-if osnr is not None: chips.append(f"<span class='meta-chip'>OSNR final: {osnr:.2f} dB</span>")
+
+if osnr is not None:
+    chips.append(f"<span class='meta-chip'>OSNR final: {osnr:.2f} dB</span>")
+    
+    # Calcular BER teórico desde OSNR para referencia
+    try:
+        from math import erfc, sqrt
+        Bo_Hz = 12.5e9  # Ancho de banda óptico de referencia
+        Rb = res.get("global", {}).get("Rb", 32e9)
+        OSNR_lin = 10.0**(osnr/10.0)
+        SNR_theoretical_lin = OSNR_lin * (Bo_Hz / Rb)
+        ber_teorico = 0.5 * erfc(sqrt(max(SNR_theoretical_lin, 1e-12))/sqrt(2.0))
+        chips.append(f"<span class='meta-chip'>BER teórico (desde OSNR): {ber_teorico*100:.4f}%</span>")
+    except Exception:
+        pass
+
 if chips:
     st.markdown("<div class='meta-row'>" + "".join(chips) + "</div>", unsafe_allow_html=True)
 
@@ -586,30 +1052,66 @@ with st.expander("Resumen de la última ejecución", expanded=True):
         else:
             bk_short = bk_full[:16] + ("…" if len(bk_full) > 16 else "")
 
-        cols[0].metric("Backend", bk_short)
-        cols[1].metric("Tiempo [s]", f"{res.get('elapsed_s', 0):.3f}")
+        cols[0].metric(
+            "Backend", 
+            bk_short,
+            help="Motor de cálculo utilizado: GPU CuPy (aceleración por GPU, hasta 100× más rápido) o CPU NumPy (solo procesador, más lento pero sin requerir CUDA)."
+        )
+        cols[1].metric(
+            "Tiempo [s]", 
+            f"{res.get('elapsed_s', 0):.3f}",
+            help="Tiempo total de ejecución de la simulación en segundos. Incluye propagación SSFM, procesamiento DSP y generación de gráficos."
+        )
 
-        # OSNR si existe; si no, mostrar SNR símbolo
+        # Solo OSNR (métrica óptica relevante)
         osnr = res.get("OSNR_final_dB", None)
-        snr  = res.get("SNR_sym_dB", None)
         if osnr is not None:
-            cols[2].metric("OSNR final [dB]", f"{osnr:.2f}")
-        elif snr is not None:
-            cols[2].metric("SNR símbolo [dB]", f"{snr:.2f}")
+            cols[2].metric(
+                "OSNR final [dB]", 
+                f"{osnr:.2f}",
+                help="Optical Signal-to-Noise Ratio al final del enlace. Relación entre potencia de señal y ruido ASE de los amplificadores, medida en ancho de banda de señal. Valores típicos: >20 dB excelente, 15-20 dB bueno, <15 dB degradado. Determina el límite de rendimiento por ruido óptico."
+            )
         else:
-            cols[2].metric("OSNR/SNR", "n/a")
+            cols[2].metric(
+                "OSNR", 
+                "n/a",
+                help="Optical Signal-to-Noise Ratio al final del enlace. No disponible para esta simulación."
+            )
 
         pout = res.get("Pout_dBm", None)
-        cols[3].metric("Pout [dBm]", f"{pout:.2f}" if pout is not None else "n/a")
+        cols[3].metric(
+            "Pout [dBm]", 
+            f"{pout:.2f}" if pout is not None else "n/a",
+            help="Potencia óptica de salida al final del enlace en dBm. Indica cuánta potencia llega al receptor después de todas las pérdidas y ganancias. Valores típicos: -10 a -25 dBm. Si es muy baja (<-30 dBm), el receptor tendrá problemas de sensibilidad."
+        )
+        
         ber_bpsk  = res.get("BER_est_BPSK", None)
-        cols[4].metric("BER BPSK", f"{ber_bpsk:.3e}" if ber_bpsk is not None else "n/a")
+        cols[4].metric(
+            "BER BPSK", 
+            f"{ber_bpsk:.3e}" if ber_bpsk is not None else "n/a",
+            help="Bit Error Rate estimado asumiendo modulación BPSK y detección directa (IMDD). Fracción de bits recibidos incorrectamente. Valores típicos: <1e-9 excelente (error-free), 1e-3 a 1e-9 aceptable con FEC, >1e-3 inutilizable. Solo válido para enlaces IMDD, no para coherente."
+        )
+        
         # Coherent extras if present
         evm_post = res.get("EVM_post_dB", None)
         Q_post = res.get("Q_post", None)
         ber_post = res.get("BER_post", None)
-        cols[5].metric("EVM post [dB]", f"{evm_post:.2f}" if evm_post is not None else "-")
-        cols[6].metric("Q post", f"{Q_post:.2f}" if Q_post is not None else "-")
-        cols[7].metric("BER post", f"{ber_post:.3e}" if ber_post is not None else "-")
+        
+        cols[5].metric(
+            "EVM post [dB]", 
+            f"{evm_post:.2f}" if evm_post is not None else "-",
+            help="Error Vector Magnitude después del receptor coherente en dB. Mide la desviación RMS entre símbolos recibidos e ideales, normalizada por potencia de señal. Valores típicos: <-25 dB excelente, -20 a -25 dB bueno, -15 a -20 dB aceptable, >-15 dB degradado. A menor valor (más negativo), mejor calidad. Solo para receptor coherente (QPSK/16-QAM)."
+        )
+        cols[6].metric(
+            "Q post", 
+            f"{Q_post:.2f}" if Q_post is not None else "-",
+            help="Factor de calidad Q en escala lineal después del receptor coherente. Relación señal-ruido en el espacio de símbolos. Q = distancia entre símbolos / desviación estándar del ruido. Valores típicos: Q>6 excelente (BER<1e-9), Q=4-6 bueno, Q<4 degradado. Se relaciona con BER mediante función Q inversa. Solo para receptor coherente."
+        )
+        cols[7].metric(
+            "BER post", 
+            f"{ber_post:.3e}" if ber_post is not None else "-",
+            help="Bit Error Rate medido después del receptor coherente. Fracción real de bits decodificados incorrectamente considerando la modulación utilizada (BPSK/QPSK/16-QAM). Valores típicos: <1e-12 excelente, 1e-9 a 1e-12 muy bueno, 1e-6 a 1e-9 bueno (con FEC), 1e-3 a 1e-6 límite FEC, >1e-3 inutilizable. Métrica definitiva de calidad del enlace."
+        )
     else:
         st.info("Aún no hay logs en la carpeta seleccionada.")
 
@@ -635,9 +1137,9 @@ profile: List[Dict[str, Any]]
 if isinstance(profile_res, list) and profile_res:
     profile = profile_res
     is_measured = True
-    st.subheader("Perfiles z (medidos)")
+    st.markdown("### Análisis del Perfil del Enlace")
 else:
-    st.subheader("Perfiles z (estimados)")
+    st.markdown("### Análisis del Perfil del Enlace (Estimado)")
 
 # Controles: mostrar OSNR/BER solo si hay datos disponibles en el perfil actual
 has_osnr = any(p.get("OSNR_dB") is not None for p in (profile_res or [])) if is_measured else True
@@ -670,26 +1172,78 @@ if not is_measured:
     st.info("Mostrando perfil estimado localmente en GUI (no hay perfil medido en el último log).")
 
 try:
-    import plotly.graph_objs as go
+    # Identificar posiciones de EDFAs (saltos de potencia > 5 dB)
+    edfa_positions = []
+    for i in range(1, len(profile)):
+        p_before = profile[i-1].get("P_dBm")
+        p_after = profile[i].get("P_dBm")
+        if p_before is not None and p_after is not None:
+            delta_p = p_after - p_before
+            if delta_p > 5.0:  # Ganancia significativa = EDFA
+                z_edfa = profile[i]["z_km"]
+                edfa_positions.append((z_edfa, delta_p))
+    
     traces = []
     z = [p["z_km"] for p in profile]
+    
     if show_P:
-        traces.append(go.Scatter(x=z, y=[p.get("P_dBm") for p in profile], mode="lines+markers", name="Potencia [dBm]"))
+        traces.append(go.Scatter(
+            x=z, y=[p.get("P_dBm") for p in profile], 
+            mode="lines+markers", 
+            name="Potencia [dBm]",
+            line=dict(color='#1f77b4', width=2),
+            marker=dict(size=4)
+        ))
     if show_O:
-        traces.append(go.Scatter(x=z, y=[p.get("OSNR_dB") for p in profile], mode="lines+markers", name="OSNR [dB]"))
+        osnr_values = [p.get("OSNR_dB") for p in profile]
+        traces.append(go.Scatter(
+            x=z, y=osnr_values, 
+            mode="lines+markers", 
+            name="OSNR [dB]",
+            line=dict(color='#ff7f0e', width=2),
+            marker=dict(size=4)
+        ))
+    
     layout = go.Layout(
-        xaxis=dict(title="Distancia [km]"),
-        yaxis=dict(title="dB / dBm"),
+        xaxis=dict(title="Distancia [km]", gridcolor='#e0e0e0'),
+        yaxis=dict(title="dB / dBm", gridcolor='#e0e0e0'),
         yaxis2=dict(title="BER", overlaying="y", side="right", type="log") if show_B else None,
-        legend=dict(orientation="h"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         template="plotly_white",
-        title="Perfiles z",
+        title="Evolución de Potencia y OSNR a lo largo del enlace",
+        hovermode='x unified',
     )
     fig = go.Figure(data=traces, layout=layout)
+    
     if show_B:
-        fig.add_trace(go.Scatter(x=z, y=[p.get("BER") for p in profile], mode="lines+markers", name="BER", yaxis="y2"))
+        fig.add_trace(go.Scatter(
+            x=z, y=[p.get("BER") for p in profile], 
+            mode="lines+markers", 
+            name="BER", 
+            yaxis="y2",
+            line=dict(color='#d62728', width=2),
+            marker=dict(size=4)
+        ))
+    
+    # Añadir marcadores de EDFAs
+    for z_edfa, gain_db in edfa_positions:
+        fig.add_vline(
+            x=z_edfa, 
+            line_dash="dash", 
+            line_color="green", 
+            opacity=0.5,
+            annotation_text=f"EDFA (+{gain_db:.1f}dB)",
+            annotation_position="top"
+        )
+    
     st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
-except Exception:
+    
+    # Información adicional sobre el perfil
+    if edfa_positions:
+        st.caption(f"{len(edfa_positions)} amplificadores ópticos detectados en el enlace (líneas verdes punteadas)")
+    
+except Exception as e:
+    st.error(f"Error generando gráficos de perfil: {e}")
     st.line_chart({"z_km": [p["z_km"] for p in profile],
                    "P_dBm": [p.get("P_dBm") for p in profile]})
 
@@ -702,3 +1256,503 @@ with col_dl2:
     st.download_button("Descargar perfil JSON",
                        data=json.dumps(profile, indent=2).encode("utf-8"),
                        file_name="perfil.json", mime="application/json")
+
+# ------------------------- Gráfico BER vs OSNR -------------------------
+
+st.divider()
+st.markdown("### Rendimiento BER vs OSNR")
+st.caption("Tasa de error de bit teórica en función de la relación señal-ruido óptica")
+
+try:
+    from math import erfc, sqrt
+    
+    # Obtener parámetros del sistema
+    current_M = int(res.get("M", st.session_state["global"].get("M", 4)))
+    current_mod = {2: "BPSK", 4: "QPSK", 16: "16-QAM", 64: "64-QAM"}.get(current_M, "QPSK")
+    Rb = float(res.get("Rb", st.session_state["global"].get("Rb", 32e9)))
+    
+    # IMPORTANTE: En este simulador, el OSNR se calcula con ancho de banda = Rb
+    # Por lo tanto, OSNR ≈ SNR (no se necesita conversión Bo/Rb)
+    # Esto es diferente a sistemas DWDM donde OSNR se mide en 0.1 nm (12.5 GHz)
+    
+    # Generar curva teórica BER(OSNR) para la modulación actual
+    osnr_range = np.linspace(5, 40, 200)  # OSNR de 5 a 40 dB
+    ber_teorico = []
+    
+    for osnr_db in osnr_range:
+        # En este simulador: OSNR_dB ≈ SNR_dB (ambos en ancho de banda Rb)
+        SNR_lin = 10.0**(osnr_db/10.0)
+        
+        # BER teórico según modulación (AWGN)
+        if current_M == 2:  # BPSK
+            ber = 0.5 * erfc(sqrt(SNR_lin))
+        elif current_M == 4:  # QPSK
+            ber = 0.5 * erfc(sqrt(SNR_lin / 2.0))
+        elif current_M == 16:  # 16-QAM
+            ber = 0.75 * erfc(sqrt(SNR_lin / 10.0))
+        else:  # Aproximación general
+            ber = 0.5 * erfc(sqrt(SNR_lin / 2.0))
+        
+        ber_teorico.append(max(ber, 1e-12))  # Evitar valores demasiado pequeños
+    
+    # Crear gráfico
+    fig_ber_osnr = go.Figure()
+    
+    # Curva teórica
+    fig_ber_osnr.add_trace(go.Scatter(
+        x=osnr_range,
+        y=ber_teorico,
+        mode='lines',
+        name=f'{current_mod} (Teórico)',
+        line=dict(color='#2E86C1', width=2)
+    ))
+    
+    # Punto del sistema actual si existe
+    osnr_measured = res.get("OSNR_final_dB", None)
+    ber_measured = res.get("BER_post", None) or res.get("BER_est_BPSK", None)
+    
+    if osnr_measured is not None and ber_measured is not None and ber_measured > 0:
+        fig_ber_osnr.add_trace(go.Scatter(
+            x=[osnr_measured],
+            y=[ber_measured],
+            mode='markers+text',
+            name='Sistema Actual',
+            marker=dict(
+                size=20,
+                color='#E74C3C',
+                symbol='star',
+                line=dict(width=2, color='#FFFFFF')
+            ),
+            text=[''],
+            textposition='top center',
+            showlegend=True,
+            hovertemplate='<b>Sistema Actual</b><br>OSNR: %{x:.2f} dB<br>BER: %{y:.2e}<extra></extra>'
+        ))
+    
+    # Línea de referencia: BER = 10^-3 (umbral típico FEC)
+    # Crear una región sombreada para indicar zona operativa
+    fig_ber_osnr.add_hrect(
+        y0=1e-12, y1=1e-3,
+        fillcolor="lightgreen", opacity=0.1,
+        layer="below", line_width=0,
+        annotation_text="Rango Operativo (con FEC)",
+        annotation_position="top left",
+        annotation_font_color='#27AE60'
+    )
+    
+    fig_ber_osnr.add_hline(
+        y=1e-3,
+        line_dash="dot",
+        line_color="#F39C12",
+        line_width=3,
+        opacity=0.8,
+        annotation_text="<b>Umbral FEC: 10⁻³</b>",
+        annotation_position="right",
+        annotation_font_size=12,
+        annotation_font_color="#F39C12"
+    )
+    
+    # Configurar layout
+    fig_ber_osnr.update_layout(
+        title=dict(
+            text=f"Rendimiento BER vs OSNR: Modulación {current_mod}",
+            font=dict(size=16, color='#2C3E50')
+        ),
+        xaxis=dict(
+            title="OSNR [dB]", 
+            gridcolor='#E0E0E0',
+            showgrid=True,
+            zeroline=False,
+            title_font=dict(color='#2C3E50'),
+            tickfont=dict(color='#2C3E50')
+        ),
+        yaxis=dict(
+            title="Tasa de Error de Bit (BER)",
+            type="log",
+            gridcolor='#E0E0E0',
+            showgrid=True,
+            zeroline=False,
+            range=[-12, 0],  # 10^-12 a 10^0
+            title_font=dict(color='#2C3E50'),
+            tickfont=dict(color='#2C3E50')
+        ),
+        template="plotly_white",
+        height=550,
+        hovermode='x unified',
+        legend=dict(
+            orientation="h", 
+            yanchor="bottom", 
+            y=1.02, 
+            xanchor="right", 
+            x=1,
+            bgcolor="rgba(255,255,255,0.9)",
+            font=dict(color='#2C3E50')
+        ),
+        plot_bgcolor='#FFFFFF',
+        paper_bgcolor='#FFFFFF',
+        font=dict(color='#2C3E50')
+    )
+    
+    st.plotly_chart(fig_ber_osnr, use_container_width=True, config={"displaylogo": False})
+    
+    # Información sobre el punto medido
+    if osnr_measured is not None and ber_measured is not None:
+        # Calcular OSNR requerido para BER = 10^-3
+        osnr_required = None
+        for i, ber in enumerate(ber_teorico):
+            if ber <= 1e-3:
+                osnr_required = osnr_range[i]
+                break
+        
+        margin_db = osnr_measured - osnr_required if osnr_required else None
+        
+        st.markdown("---")
+        st.markdown("#### Análisis de Rendimiento del Sistema")
+        
+        # Calcular OSNR efectivo basado en el BER medido
+        # Inversión de la fórmula BER para QPSK: BER = 0.5*erfc(sqrt(OSNR_eff))
+        # OSNR_eff representa la degradación TOTAL (ASE + dispersión + no linealidades)
+        import scipy.special
+        osnr_effective = None
+        if ber_measured > 0 and ber_measured < 0.5:
+            try:
+                # Para QPSK: BER = 0.5*erfc(sqrt(SNR)/sqrt(2))
+                # Invertir: SNR = 2 * [erfc_inv(2*BER)]^2
+                snr_linear = 2.0 * (scipy.special.erfcinv(2.0 * ber_measured))**2
+                osnr_effective = 10 * math.log10(max(snr_linear, 1e-12))
+            except:
+                osnr_effective = None
+        
+        # Usar columnas para métricas clave
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                label="Modulación",
+                value=current_mod,
+                help="Formato de modulación digital utilizado en la transmisión. BPSK: 1 bit/símbolo (más robusto), QPSK: 2 bits/símbolo (balance), 16-QAM: 4 bits/símbolo (mayor eficiencia espectral pero más sensible al ruido)."
+            )
+        
+        with col2:
+            # Mostrar OSNR óptico y efectivo
+            osnr_display = f"{osnr_measured:.2f} dB"
+            if osnr_effective is not None and osnr_effective > -10:
+                penalty_db = osnr_measured - osnr_effective
+                st.metric(
+                    label="OSNR Óptico / Efectivo",
+                    value=osnr_display,
+                    delta=f"Penalidad: {penalty_db:.1f} dB" if penalty_db > 0.5 else "Sin degradación",
+                    delta_color="inverse" if penalty_db > 3 else "normal",
+                    help=f"OSNR óptico: {osnr_measured:.2f} dB - Relación señal/ruido medida por ruido ASE de amplificadores (solo óptico).\n\n"
+                         f"OSNR efectivo: {osnr_effective:.2f} dB - OSNR equivalente calculado desde BER real, incluye TODAS las degradaciones (ASE + dispersión cromática + efectos no lineales + PMD + ruido de fase).\n\n"
+                         f"Penalidad del sistema: {penalty_db:.2f} dB - Diferencia entre OSNR óptico y efectivo. Representa cuánto se degrada el enlace por efectos que NO son ruido ASE. Valores típicos: <1 dB excelente (sistema limitado por ASE), 1-3 dB bueno, 3-6 dB aceptable (dispersión o no linealidades moderadas), >6 dB problemático (dispersión no compensada o SPM/XPM severos)."
+                )
+            else:
+                st.metric(
+                    label="OSNR Medido",
+                    value=f"{osnr_measured:.2f} dB",
+                    delta=f"{margin_db:+.2f} dB" if osnr_required and margin_db is not None else None,
+                    delta_color="normal" if margin_db and margin_db > 0 else "inverse",
+                    help="Optical Signal-to-Noise Ratio medido al final del enlace, calculado únicamente a partir del ruido ASE (Amplified Spontaneous Emission) de los amplificadores EDFA. Esta es la métrica 'óptica pura' sin considerar otras degradaciones. Valores típicos: >20 dB excelente, 15-20 dB bueno, 10-15 dB marginal, <10 dB insuficiente. El delta muestra el margen respecto al OSNR requerido para BER<1e-3."
+                )
+        
+        with col3:
+            ber_percent = ber_measured * 100
+            st.metric(
+                label="BER Medido",
+                value=f"{ber_measured:.2e}",
+                delta="FALLA" if ber_measured >= 1e-3 else "OK",
+                delta_color="inverse" if ber_measured >= 1e-3 else "normal",
+                help=f"Bit Error Rate (Tasa de Error de Bit) medido después del receptor coherente. Representa la fracción de bits recibidos incorrectamente: {ber_percent:.4f}% de errores.\n\n"
+                     f"Interpretación por rangos:\n"
+                     f"• <1e-12: Excelente - Calidad premium, error-free prácticamente\n"
+                     f"• 1e-12 a 1e-9: Muy bueno - Sin errores perceptibles\n"
+                     f"• 1e-9 a 1e-6: Bueno - Requiere FEC débil\n"
+                     f"• 1e-6 a 1e-3: Límite FEC - Forward Error Correction puede corregir\n"
+                     f"• 1e-3 a 1e-2: FALLA - FEC insuficiente, degradación severa\n"
+                     f"• >1e-2: INUTILIZABLE - Enlace caído\n\n"
+                     f"Este BER incluye TODAS las degradaciones del sistema: ruido ASE, dispersión cromática, efectos no lineales (SPM/XPM/FWM), ruido de fase, timing jitter, etc."
+            )
+        
+        with col4:
+            if osnr_required and margin_db is not None:
+                st.metric(
+                    label="Margen del Sistema",
+                    value=f"{margin_db:.2f} dB",
+                    delta=f"vs umbral FEC",
+                    delta_color="normal" if margin_db > 0 else "inverse",
+                    help=f"Margen del sistema = OSNR medido ({osnr_measured:.2f} dB) - OSNR requerido ({osnr_required:.2f} dB) = {margin_db:.2f} dB.\n\n"
+                         f"Indica cuánto 'colchón' tiene el enlace respecto al umbral mínimo para BER<1e-3 (límite FEC).\n\n"
+                         f"Interpretación:\n"
+                         f"• Margen >6 dB: Excelente - Sistema robusto, tolera degradaciones adicionales (envejecimiento de componentes, pérdidas inesperadas, reparaciones)\n"
+                         f"• Margen 3-6 dB: Bueno - Operación segura con reserva razonable\n"
+                         f"• Margen 0-3 dB: Marginal - Funciona pero sin margen para contingencias\n"
+                         f"• Margen <0 dB: FALLA - OSNR insuficiente, BER>1e-3, FEC saturado\n\n"
+                         f"IMPORTANTE: Un margen positivo NO garantiza buen desempeño si hay degradaciones severas por dispersión o no linealidades (verificar OSNR efectivo). "
+                         f"El margen solo considera el límite teórico por ruido ASE."
+                )
+        
+        # Panel informativo con análisis profesional detallado usando componentes nativos de Streamlit
+        if osnr_required:
+            # Determinar el estado del sistema basado en el BER real
+            ber_threshold = 1e-3
+            system_ok = ber_measured < ber_threshold
+            
+            # ANÁLISIS PROFESIONAL DETALLADO
+            osnr_is_good = margin_db > 3  # Margen significativo de OSNR
+            osnr_is_marginal = -3 <= margin_db <= 3
+            osnr_is_bad = margin_db < -3
+            
+            # Calcular dispersión total acumulada
+            disp_total = None
+            try:
+                disp_total = 0
+                for blk in st.session_state.chain:
+                    if blk.get("type") == "fiber":
+                        L = blk["par"].get("L", 0)
+                        beta2 = blk["par"].get("beta2", 0)
+                        disp_total += beta2 * L * 1e24  # convertir a ps²
+            except:
+                pass
+            
+            st.markdown("---")
+            
+            # Determinar régimen de operación y diagnóstico
+            if system_ok:
+                # ==================== SISTEMA FUNCIONANDO CORRECTAMENTE ====================
+                if osnr_is_good:
+                    st.success("Sistema Funcionando Correctamente")
+                    
+                    st.markdown("**Evaluación de Rendimiento:**")
+                    st.markdown(f"""
+                    - BER = `{ber_measured:.2e}` está por debajo del umbral FEC (`10⁻³`)
+                    - OSNR = `{osnr_measured:.1f} dB` excede el requerido (`{osnr_required:.1f} dB`) con margen de `{margin_db:.1f} dB`
+                    - La relación señal-ruido es suficiente para demodulación confiable
+                    {f'- Dispersión acumulada = `{disp_total:.1f} ps²` está adecuadamente compensada' if disp_total and abs(disp_total) < 200 else ''}
+                    """)
+                    
+                    st.info(f"**Análisis:** El sistema tiene margen de operación saludable. Puede tolerar degradaciones adicionales de hasta **{margin_db:.1f} dB** antes de alcanzar el límite FEC.")
+                else:
+                    st.success("Sistema Operativo con OSNR Marginal")
+                    
+                    st.markdown("**Evaluación de Rendimiento:**")
+                    st.markdown(f"""
+                    - BER = `{ber_measured:.2e}` dentro del rango FEC
+                    - OSNR = `{osnr_measured:.1f} dB` cercano al mínimo requerido (`{osnr_required:.1f} dB`)
+                    - Margen limitado: `{margin_db:+.1f} dB`
+                    """)
+                    
+                    st.warning("**Recomendación:** Aunque funcional, el sistema opera cerca del límite. Considere aumentar potencia TX o mejorar NF de amplificadores para mayor robustez.")
+            
+            else:
+                # ==================== SISTEMA DEGRADADO - ANÁLISIS DETALLADO ====================
+                
+                # Caso 1: OSNR excelente pero BER malo - Problema de dispersión o no linealidades
+                if osnr_is_good:
+                    # Analizar dispersión - CORREGIDO: dispersión en ps² (no ps²/m)
+                    if disp_total and abs(disp_total) > 500:
+                        # Dispersión ALTA (en valor absoluto) causa ISI
+                        st.error("FALLA: Degradación por Dispersión Cromática")
+                        
+                        st.markdown("**Causa Raíz Identificada: Interferencia Inter-Símbolo (ISI)**")
+                        
+                        st.markdown("**Diagnóstico Detallado:**")
+                        st.markdown(f"""
+                        - BER = `{ber_measured:.2e}` >> `10⁻³` (umbral FEC) — **inaceptable**
+                        - OSNR = `{osnr_measured:.1f} dB` >> `{osnr_required:.1f} dB` — **excelente, NO es el problema**
+                        - Dispersión cromática acumulada = `{disp_total:.1f} ps²` {'**(severamente alta)**' if abs(disp_total) > 2000 else '**(alta)**'}
+                        - A `{st.session_state['global'].get('Rb', 32e9)/1e9:.0f} Gbaud`, esta dispersión causa ensanchamiento temporal crítico
+                        """)
+                        
+                        with st.expander("Explicación Técnica", expanded=False):
+                            st.markdown(f"""
+                            La dispersión cromática hace que diferentes componentes espectrales del pulso 
+                            viajen a velocidades distintas, causando **ensanchamiento temporal**. Con `{abs(disp_total):.0f} ps²` 
+                            de dispersión acumulada, los pulsos se "esparcen" tanto que invaden símbolos adyacentes, 
+                            generando **Interferencia Inter-Símbolo (ISI)**. 
+                            
+                            Aunque la señal tiene excelente SNR, el receptor no puede distinguir entre símbolos consecutivos.
+                            """)
+                        
+                        with st.expander("Soluciones Recomendadas (en orden de prioridad)", expanded=False):
+                            st.markdown(f"""
+                            **1. Compensación en Fibra (DCF):**
+                            - Agregar fibra DCF (Dispersion Compensating Fiber) con beta2 positivo para anular la dispersión acumulada
+                            - Requiere aproximadamente `{abs(disp_total/1e24):.1e} ps²·m` de compensación
+                            
+                            **2. Compensación Digital (CDC):**
+                            - Mejorar el ecualizador digital en el receptor
+                            - El actual puede estar subdimensionado para `{abs(disp_total):.0f} ps²`
+                            
+                            **3. Reducir Tasa de Símbolos:**
+                            - Bajar de `{st.session_state['global'].get('Rb', 32e9)/1e9:.0f} Gbaud` a `{st.session_state['global'].get('Rb', 32e9)/1e9/4:.0f} Gbaud`
+                            - Reduce la sensibilidad a dispersión por factor de 16 (proporcional a Rb²)
+                            
+                            **4. Usar Modulación más Robusta:**
+                            - QPSK tolera mejor ISI que formatos de orden superior
+                            """)
+                    
+                    else:
+                        # Dispersión BAJA - debe ser no linealidades
+                        st.error("FALLA: Degradación por Efectos No Lineales")
+                        
+                        # Obtener potencia y parámetros
+                        Ptx_mW = st.session_state['global'].get('Ptx', 0.001) * 1000
+                        Ptx_dBm = 10 * np.log10(Ptx_mW)
+                        
+                        st.markdown("**Causa Raíz Identificada: Efectos Kerr No Lineales**")
+                        
+                        st.markdown("**Diagnóstico Detallado:**")
+                        st.markdown(f"""
+                        - BER = `{ber_measured:.2e}` >> `10⁻³` (umbral FEC) — **inaceptable**
+                        - OSNR = `{osnr_measured:.1f} dB` >> `{osnr_required:.1f} dB` — **excelente, NO es el problema**
+                        - Dispersión = `{disp_total:.1f} ps²` — **baja, NO es el problema principal**
+                        - Potencia de transmisión = `{Ptx_dBm:.1f} dBm` (`{Ptx_mW:.1f} mW`)
+                        """)
+                        
+                        with st.expander("Explicación Técnica", expanded=False):
+                            st.markdown("""
+                            A potencias ópticas elevadas, el índice de refracción de la fibra varía con la intensidad 
+                            de la señal (**efecto Kerr**). Esto genera:
+                            
+                            - **SPM (Self-Phase Modulation):** La propia señal modula su fase, ensanchando el espectro
+                            - **XPM (Cross-Phase Modulation):** Señales adyacentes se modulan entre sí
+                            - **FWM (Four-Wave Mixing):** Generación de productos de intermodulación
+                            
+                            Estos efectos distorsionan la constelación QPSK, desplazando puntos fuera de sus 
+                            regiones de decisión incluso con SNR alto.
+                            """)
+                        
+                        with st.expander("Soluciones Recomendadas", expanded=False):
+                            st.markdown(f"""
+                            **1. Optimizar Potencia de Lanzamiento:**
+                            - Reducir Ptx de `{Ptx_dBm:.1f} dBm` a aproximadamente `0-3 dBm`
+                            - Existe un punto óptimo donde se balancea OSNR vs no linealidades
+                            
+                            **2. Usar Fibras de Área Efectiva Mayor:**
+                            - Fibras con Aeff más grande reducen la intensidad óptica (I = P/Aeff)
+                            - Esto disminuye los efectos Kerr
+                            
+                            **3. Gestión de Dispersión:**
+                            - Paradójicamente, cierta dispersión residual puede ayudar
+                            - Técnica de "walk-off" para esparcir la señal y reducir picos de potencia
+                            
+                            **4. Pre-distorsión Digital:**
+                            - Implementar DBP (Digital Back-Propagation)
+                            - Compensa no linealidades en el receptor
+                            """)
+                
+                elif osnr_is_bad:
+                    # Caso 2: OSNR insuficiente - Problema de ruido
+                    st.error("FALLA: Degradación por Ruido ASE Excesivo")
+                    
+                    # Contar amplificadores
+                    n_edfas = sum(1 for blk in st.session_state.chain if blk.get("type") == "edfa")
+                    L_total = sum(blk["par"].get("L", 0) for blk in st.session_state.chain if blk.get("type") == "fiber") / 1000
+                    
+                    st.markdown("**Causa Raíz Identificada: Relación Señal-Ruido Insuficiente**")
+                    
+                    st.markdown("**Diagnóstico Detallado:**")
+                    st.markdown(f"""
+                    - BER = `{ber_measured:.2e}` >> `10⁻³` (umbral FEC)
+                    - OSNR = `{osnr_measured:.1f} dB` < `{osnr_required:.1f} dB` — **déficit de {abs(margin_db):.1f} dB**
+                    - Enlace: `{L_total:.0f} km` con `{n_edfas}` amplificador{'es' if n_edfas > 1 else ''}
+                    - Cada EDFA contribuye ruido ASE que se acumula en cascada
+                    """)
+                    
+                    with st.expander("Explicación Técnica", expanded=False):
+                        st.markdown(f"""
+                        El ruido **ASE (Amplified Spontaneous Emission)** se genera en cada EDFA por emisión espontánea. 
+                        En cascadas de `{n_edfas}` amplificadores, el ruido se acumula mientras que la señal permanece 
+                        constante (balance ganancia-pérdida), degradando el OSNR. 
+                        
+                        Con OSNR = `{osnr_measured:.1f} dB`, el ruido enmascara la señal impidiendo decisiones correctas en el receptor.
+                        """)
+                    
+                    with st.expander("Soluciones Recomendadas", expanded=False):
+                        st.markdown("""
+                        **1. Aumentar Potencia de Transmisión:**
+                        - Incrementar Ptx mejora directamente el OSNR
+                        - Cada +3 dB en Ptx da +3 dB en OSNR (relación lineal)
+                        
+                        **2. Mejorar Figura de Ruido (NF) de EDFAs:**
+                        - Usar amplificadores de mejor calidad con NF < 4.5 dB
+                        - La reducción de NF se traduce directamente en mejor OSNR
+                        
+                        **3. Reducir Número de Amplificadores:**
+                        - Cada amplificador eliminado mejora el OSNR
+                        - Considere tramos de fibra más cortos o amplificadores de mayor ganancia
+                        
+                        **4. Amplificación Raman:**
+                        - Usar amplificación distribuida Raman en lugar de lumped EDFAs
+                        - Puede mejorar el OSNR en 2-3 dB
+                        
+                        **5. Modulación más Robusta:**
+                        - BPSK requiere ~3 dB menos OSNR que QPSK para el mismo BER
+                        """)
+                
+                else:
+                    # Caso 3: Múltiples factores contribuyen
+                    st.error("FALLA: Degradación Multifactorial")
+                    
+                    st.markdown("**Múltiples Factores Contribuyen a la Degradación**")
+                    
+                    st.markdown("**Diagnóstico:**")
+                    st.markdown(f"""
+                    - BER = `{ber_measured:.2e}` >> `10⁻³` (fuera de especificación)
+                    - OSNR = `{osnr_measured:.1f} dB` ~ `{osnr_required:.1f} dB` (marginal, margen: `{margin_db:+.1f} dB`)
+                    {f'- Dispersión = `{disp_total:.1f} ps²` (moderada)' if disp_total else ''}
+                    - Degradación causada por combinación de ruido ASE, dispersión residual y posibles no linealidades
+                    """)
+                    
+                    st.info("""
+                    **Recomendaciones:** Optimización sistémica requerida: mejorar OSNR (aumentar Ptx, mejor NF), 
+                    compensar dispersión (CDC or DCF), y verificar niveles de potencia para evitar no linealidades.
+                    """)
+        
+        # Notas técnicas en expander
+        with st.expander("Notas Técnicas y Supuestos del Modelo", expanded=False):
+            st.markdown("""
+            **Supuestos de la Curva Teórica:**
+            - Asume canal AWGN (Ruido Gaussiano Blanco Aditivo) ideal
+            - No se consideran degradaciones ópticas en la teoría
+            - Sincronización y recuperación de portadora perfectas
+            
+            **Medición del OSNR:**
+            - OSNR medido en el ancho de banda de señal = Rb (tasa de símbolos)
+            - Por lo tanto: OSNR ≈ SNR eléctrico (sin conversión adicional)
+            - Difiere de sistemas DWDM donde el OSNR típicamente se mide en 0.1 nm (~12.5 GHz @ 1550 nm)
+            
+            **Fuentes de Desviación del BER respecto a la Teoría:**
+            - Dispersión cromática residual después de la compensación
+            - Efectos no lineales: Automodulación de Fase (SPM), Modulación Cruzada de Fase (XPM), Mezclado de Cuatro Ondas (FWM)
+            - Dispersión por Modo de Polarización (PMD)
+            - Ruido de fase y jitter de temporización
+            - Variaciones en la figura de ruido del amplificador
+            - Ecualización y recuperación de portadora imperfectas
+            
+            **Umbral FEC:**
+            - La línea horizontal en BER = 10⁻³ representa el umbral típico de Corrección de Errores hacia Adelante
+            - Los códigos FEC modernos pueden corregir errores hasta este nivel, logrando transmisión libre de errores
+            - El área sombreada en verde indica el rango operativo con protección FEC
+            """)
+    else:
+        # Mensaje cuando no hay datos del sistema
+        st.markdown("---")
+        st.info("""
+        **ℹ️ Curva BER vs OSNR**
+        
+        Este gráfico muestra la relación teórica entre OSNR y BER para el formato de modulación configurado, 
+        asumiendo un canal AWGN (Ruido Gaussiano Blanco Aditivo) ideal.
+        
+        **Nota:** En este simulador, el OSNR se mide en el ancho de banda de la señal (Rb), por lo que OSNR ≈ SNR. 
+        Esto difiere de los sistemas DWDM comerciales donde el OSNR típicamente se mide en 0.1 nm (12.5 GHz @ 1550 nm).
+        
+        Ejecute una simulación para ver cómo se desempeña su sistema en relación con la curva teórica.
+        """)
+    
+except Exception as e:
+    st.error(f"Error generando gráfico BER vs OSNR: {e}")
+    st.exception(e)
+
+# ------------------------- Fin de visualizaciones -------------------------

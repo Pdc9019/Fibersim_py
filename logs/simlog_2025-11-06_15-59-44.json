@@ -1,0 +1,186 @@
+{
+  "date": "06-Nov-2025 15:59:44",
+  "elapsed_s": 1.2283623218536377,
+  "description": "Sistema de validación: 1 span de 100 km, balanceado, OSNR teórico ~22 dB",
+  "global": {
+    "Rb": 32000000000.0,
+    "M": 4,
+    "sps": 8,
+    "Fs": 256000000000.0,
+    "Nsym": 16384,
+    "Ptx": 0.001,
+    "mod": "QPSK",
+    "rx": "coh",
+    "pol": "dp"
+  },
+  "pulse": {
+    "type": "RRC",
+    "roll": 0.1,
+    "span": 10
+  },
+  "dsp": {
+    "cdc_mode": "digital"
+  },
+  "validation": {
+    "comment": "Cálculos teóricos esperados:",
+    "fiber_loss_dB": 20.0,
+    "edfa_gain_dB": 20.0,
+    "net_gain_dB": 0.0,
+    "P_signal_out_dBm": 0.0,
+    "P_signal_out_W": 0.001,
+    "NF_dB": 4.77,
+    "P_ase_W_expected": 4.64e-08,
+    "OSNR_dB_expected": 13.34,
+    "BER_expected": "~1e-2 (bajo OSNR, sistema degradado intencionalmente para prueba)"
+  },
+  "chain": [
+    {
+      "type": "fiber",
+      "par": {
+        "L": 100000.0,
+        "beta2": -2.1e-26,
+        "gamma": 0.0013,
+        "dz": 100.0,
+        "alpha": 4.6052e-05
+      },
+      "comment": "100 km de fibra SMF-28 (alfa=0.2 dB/km = 4.6052e-05 Np/m)"
+    },
+    {
+      "type": "edfa",
+      "par": {
+        "G_dB": 20.0,
+        "nsp": 1.5
+      },
+      "comment": "EDFA con ganancia = pérdida de fibra (20 dB), NF = 4.77 dB"
+    }
+  ],
+  "result": {
+    "status": "ok",
+    "notes": "RRC+SSFM; snapshots guardados si do_const=True",
+    "Lcum_m": 100000.0,
+    "G_dB": 20.0,
+    "Pmean_W": 9.928385846787629e-09,
+    "backend": "GPU CuPy - NVIDIA GeForce RTX 3060 Laptop GPU",
+    "elapsed_s": 1.2283623218536377,
+    "delay_best_samp": 80,
+    "BER_est_BPSK": null,
+    "BER_post": 0.42498779296875,
+    "EVM_post_dB": 1.525644296106385,
+    "Q_post": 1.186404493815386,
+    "SNR_sym_dB": null,
+    "OSNR_final_dB": 4.191299029215755,
+    "Pout_dBm": -50.03121353198033,
+    "profile": [
+      {
+        "z_km": 0.0,
+        "P_dBm": -10.030954570766681,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 5.0,
+        "P_dBm": -12.030967518827362,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 10.0,
+        "P_dBm": -14.030980466888046,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 15.0,
+        "P_dBm": -16.030993414948725,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 20.0,
+        "P_dBm": -18.031006363009407,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 25.0,
+        "P_dBm": -20.03101931107009,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 30.0,
+        "P_dBm": -22.031032259130768,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 35.0,
+        "P_dBm": -24.03104520719145,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 40.0,
+        "P_dBm": -26.031058155252133,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 45.0,
+        "P_dBm": -28.03107110331282,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 50.0,
+        "P_dBm": -30.031084051373497,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 55.0,
+        "P_dBm": -32.031096999434176,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 60.0,
+        "P_dBm": -34.03110994749486,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 65.0,
+        "P_dBm": -36.03112289555555,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 70.0,
+        "P_dBm": -38.031135843616234,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 75.0,
+        "P_dBm": -40.03114879167691,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 80.0,
+        "P_dBm": -42.031161739737605,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 85.0,
+        "P_dBm": -44.031174687798284,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 90.0,
+        "P_dBm": -46.03118763585897,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 95.0,
+        "P_dBm": -48.03120058391965,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 100.0,
+        "P_dBm": -50.03121353198033,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 100.0,
+        "P_dBm": -27.95948079123372,
+        "OSNR_dB": 4.191299029215755
+      }
+    ]
+  }
+}

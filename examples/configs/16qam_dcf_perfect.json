@@ -1,0 +1,170 @@
+{
+  "global": {
+    "project": "16-QAM 300 km con DCF Perfecto (Test Límite ASE)",
+    "Rb": 10000000000,
+    "M": 16,
+    "mod": "16QAM",
+    "rx": "coh",
+    "sps": 8,
+    "Fs": 80000000000,
+    "Nsym": 8192,
+    "Ptx": 5e-3,
+    "lambda_nm": 1550
+  },
+  "pulse": {
+    "roll": 0.15,
+    "span": 10
+  },
+  "chain": [
+    {
+      "comment": "Tramo 1: SMF 60 km",
+      "type": "fiber",
+      "par": {
+        "L": 60000.0,
+        "beta2": -2.168e-26,
+        "gamma": 0.0013,
+        "dz": 1.0,
+        "alpha": 4.605e-5
+      }
+    },
+    {
+      "comment": "DCF compensación exacta (ratio 5:1)",
+      "type": "fiber",
+      "par": {
+        "L": 12000.0,
+        "beta2": 1.084e-25,
+        "gamma": 0.0050,
+        "dz": 1.0,
+        "alpha": 1.151e-4
+      }
+    },
+    {
+      "comment": "EDFA ruido moderado",
+      "type": "edfa",
+      "par": {
+        "G_dB": 21.0,
+        "nsp": 2.0
+      }
+    },
+    {
+      "comment": "Tramo 2: SMF 60 km",
+      "type": "fiber",
+      "par": {
+        "L": 60000.0,
+        "beta2": -2.168e-26,
+        "gamma": 0.0013,
+        "dz": 1.0,
+        "alpha": 4.605e-5
+      }
+    },
+    {
+      "comment": "DCF compensación exacta",
+      "type": "fiber",
+      "par": {
+        "L": 12000.0,
+        "beta2": 1.084e-25,
+        "gamma": 0.0050,
+        "dz": 1.0,
+        "alpha": 1.151e-4
+      }
+    },
+    {
+      "comment": "EDFA ruido moderado",
+      "type": "edfa",
+      "par": {
+        "G_dB": 21.0,
+        "nsp": 2.0
+      }
+    },
+    {
+      "comment": "Tramo 3: SMF 60 km",
+      "type": "fiber",
+      "par": {
+        "L": 60000.0,
+        "beta2": -2.168e-26,
+        "gamma": 0.0013,
+        "dz": 1.0,
+        "alpha": 4.605e-5
+      }
+    },
+    {
+      "comment": "DCF compensación exacta",
+      "type": "fiber",
+      "par": {
+        "L": 12000.0,
+        "beta2": 1.084e-25,
+        "gamma": 0.0050,
+        "dz": 1.0,
+        "alpha": 1.151e-4
+      }
+    },
+    {
+      "comment": "EDFA ruido moderado",
+      "type": "edfa",
+      "par": {
+        "G_dB": 21.0,
+        "nsp": 2.0
+      }
+    },
+    {
+      "comment": "Tramo 4: SMF 60 km",
+      "type": "fiber",
+      "par": {
+        "L": 60000.0,
+        "beta2": -2.168e-26,
+        "gamma": 0.0013,
+        "dz": 1.0,
+        "alpha": 4.605e-5
+      }
+    },
+    {
+      "comment": "DCF compensación exacta",
+      "type": "fiber",
+      "par": {
+        "L": 12000.0,
+        "beta2": 1.084e-25,
+        "gamma": 0.0050,
+        "dz": 1.0,
+        "alpha": 1.151e-4
+      }
+    },
+    {
+      "comment": "EDFA ruido moderado",
+      "type": "edfa",
+      "par": {
+        "G_dB": 21.0,
+        "nsp": 2.0
+      }
+    },
+    {
+      "comment": "Tramo 5: SMF 60 km final",
+      "type": "fiber",
+      "par": {
+        "L": 60000.0,
+        "beta2": -2.168e-26,
+        "gamma": 0.0013,
+        "dz": 1.0,
+        "alpha": 4.605e-5
+      }
+    },
+    {
+      "comment": "DCF compensación final",
+      "type": "fiber",
+      "par": {
+        "L": 12000.0,
+        "beta2": 1.084e-25,
+        "gamma": 0.0050,
+        "dz": 1.0,
+        "alpha": 1.151e-4
+      }
+    },
+    {
+      "comment": "EDFA final",
+      "type": "edfa",
+      "par": {
+        "G_dB": 21.0,
+        "nsp": 2.0
+      }
+    }
+  ]
+}

@@ -33,7 +33,11 @@ def run_chain(
     consSym: List[Any] = []
     powZ: List[float] = []
     powW: List[float] = []
-
+    osnrZ: List[float] = []  # OSNR en cada punto
+    
+    # Parámetros para cálculo de OSNR
+    Rb = float(parGlob.get("Rb", 32e9))  # Tasa de símbolos (Hz)
+    
     # --- Imagen INICIAL EN Z = 0 KM ---
     if do_const:
         B0 = rxF(A)
@@ -42,7 +46,17 @@ def run_chain(
         consSym.append(sym0)
         consZ.append(0.0)
         powZ.append(0.0)
-        powW.append(float(xp.mean(xp.abs(A) ** 2)))
+        P_sig = float(xp.mean(xp.abs(A) ** 2))
+        powW.append(P_sig)
+        
+        # OSNR inicial (antes de amplificadores, infinito en principio)
+        P_ase = info.get("P_ASE_total", 0.0)
+        if P_ase > 1e-30:
+            osnr_lin = P_sig / P_ase
+            osnr_db = 10.0 * xp.log10(osnr_lin) if hasattr(xp, 'log10') else 10.0 * float(xp.log(osnr_lin) / xp.log(10.0))
+            osnrZ.append(float(osnr_db))
+        else:
+            osnrZ.append(None)  # Sin ruido ASE aún
 
     for k, blk in enumerate(chain):
         btype = blk.get("type")
@@ -65,7 +79,17 @@ def run_chain(
                     consSym.append(sym)
                     consZ.append(zCum)
                     powZ.append(zCum)
-                    powW.append(float(xp.mean(xp.abs(A) ** 2)))
+                    P_sig = float(xp.mean(xp.abs(A) ** 2))
+                    powW.append(P_sig)
+                    
+                    # Calcular OSNR
+                    P_ase = info.get("P_ASE_total", 0.0)
+                    if P_ase > 1e-30:
+                        osnr_lin = P_sig / P_ase
+                        osnr_db = 10.0 * xp.log10(osnr_lin) if hasattr(xp, 'log10') else 10.0 * float(xp.log(osnr_lin) / xp.log(10.0))
+                        osnrZ.append(float(osnr_db))
+                    else:
+                        osnrZ.append(None)
 
             if use_splice_loss and k < len(chain) - 1 and chain[k + 1].get("type") == "fiber" and splice_dB:
                 A = A * (10 ** (-splice_dB / 20.0))
@@ -79,7 +103,17 @@ def run_chain(
                 consSym.append(sym)
                 consZ.append(zCum)
                 powZ.append(zCum)
-                powW.append(float(xp.mean(xp.abs(A) ** 2)))
+                P_sig = float(xp.mean(xp.abs(A) ** 2))
+                powW.append(P_sig)
+                
+                # Calcular OSNR
+                P_ase = info.get("P_ASE_total", 0.0)
+                if P_ase > 1e-30:
+                    osnr_lin = P_sig / P_ase
+                    osnr_db = 10.0 * xp.log10(osnr_lin) if hasattr(xp, 'log10') else 10.0 * float(xp.log(osnr_lin) / xp.log(10.0))
+                    osnrZ.append(float(osnr_db))
+                else:
+                    osnrZ.append(None)
         else:
             raise ValueError(f"Bloque no soportado aún: {btype}")
 
@@ -91,6 +125,7 @@ def run_chain(
         "consSym": consSym,
         "powZ_m": powZ,
         "powW_W": powW,
+        "osnrZ_dB": osnrZ,
         "delay_samp": 2 * info["pulseDelay"],
         "sps": sps,
     }

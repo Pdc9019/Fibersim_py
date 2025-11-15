@@ -27,14 +27,14 @@ def gn_snr_per_channel(
     Pch = 1e-3 * 10**(Pch_dBm/10)
 
     # L_eff
-    Leff = (1 - math.exp(-2*alpha*1e3)) / (2*alpha)  # aproximación por span corto 1 km, ajusta si quieres por L_span
+    Leff = (1 - math.exp(-2*alpha*1e3)) / (2*alpha)  # aproximación por span corto 1 km
     # ruído ASE por span en banda equivalente a Rs
     from .edfa import dB_to_lin
     h = 6.62607015e-34
     c = 299792458.0
     nu = c / (lambda_nm*1e-9)
     NF = dB_to_lin(NF_dB)
-    G_lin = dB_to_lin(20.0)  # ejemplo, ajusta si sabes la ganancia real
+    G_lin = dB_to_lin(20.0)  #ganancia tx
     Pase_span = (NF/2.0) * 2*h*nu*(G_lin-1)*Rs
 
     # NLI PSD aprox (coeficiencia eta)

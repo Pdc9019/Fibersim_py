@@ -1,0 +1,168 @@
+{
+  "date": "06-Nov-2025 12:09:23",
+  "elapsed_s": 8.35539197921753,
+  "meta": {
+    "name": "GNPy validation run (copy)",
+    "reference": "Derived from examples/configs/gnpy_val_1.json",
+    "notes": "Use this config to compare FiberSim results against a GNPy-style validation (OSNR / ASE noise / post-DSP SNR). Do a run and record OSNR_final_dB and SNR_sym_dB for comparison."
+  },
+  "global": {
+    "Rb": 32000000000.0,
+    "M": 4,
+    "sps": 32,
+    "Fs": 1024000000000.0,
+    "Nsym": 4096,
+    "Ptx": 0.0001,
+    "mod": "QPSK",
+    "rx": "coh",
+    "pol": "sp"
+  },
+  "pulse": {
+    "type": "RRC",
+    "roll": 0.1,
+    "span": 10
+  },
+  "chain": [
+    {
+      "type": "edfa",
+      "par": {
+        "G_dB": 22.0,
+        "nsp": 1.58,
+        "label": "booster"
+      }
+    },
+    {
+      "type": "fiber",
+      "par": {
+        "L": 80000.0,
+        "beta2": -2.1e-26,
+        "gamma": 0.0013,
+        "dz": 10.0,
+        "alpha": 4.605e-05,
+        "label": "SMF 80 km"
+      }
+    },
+    {
+      "type": "edfa",
+      "par": {
+        "G_dB": 16.0,
+        "nsp": 1.7,
+        "label": "preamp"
+      }
+    }
+  ],
+  "result": {
+    "status": "ok",
+    "notes": "RRC+SSFM; snapshots guardados si do_const=True",
+    "Lcum_m": 80000.0,
+    "G_dB": 38.0,
+    "Pmean_W": 9.886581027020284e-06,
+    "backend": "GPU CuPy - NVIDIA GeForce RTX 3060 Laptop GPU",
+    "elapsed_s": 8.35539197921753,
+    "delay_best_samp": 320,
+    "BER_est_BPSK": null,
+    "BER_post": 0.4024658203125,
+    "EVM_post_dB": 1.1060334491210773,
+    "Q_post": 1.2451260672989848,
+    "SNR_sym_dB": -1.0213641162196017,
+    "OSNR_final_dB": 24.84084354537393,
+    "Pout_dBm": -20.049538699612448,
+    "profile": [
+      {
+        "z_km": 0.0,
+        "P_dBm": -26.059830678949957,
+        "OSNR_dB": null
+      },
+      {
+        "z_km": 0.0,
+        "P_dBm": -4.050129986322259,
+        "OSNR_dB": 25.858832443653704
+      },
+      {
+        "z_km": 5.0,
+        "P_dBm": -5.050093030902891,
+        "OSNR_dB": 24.858869399073072
+      },
+      {
+        "z_km": 10.0,
+        "P_dBm": -6.050056075483522,
+        "OSNR_dB": 23.85890635449244
+      },
+      {
+        "z_km": 15.0,
+        "P_dBm": -7.050019120064154,
+        "OSNR_dB": 22.85894330991181
+      },
+      {
+        "z_km": 20.0,
+        "P_dBm": -8.049982164644787,
+        "OSNR_dB": 21.858980265331176
+      },
+      {
+        "z_km": 25.0,
+        "P_dBm": -9.04994520922542,
+        "OSNR_dB": 20.859017220750545
+      },
+      {
+        "z_km": 30.0,
+        "P_dBm": -10.049908253806052,
+        "OSNR_dB": 19.85905417616991
+      },
+      {
+        "z_km": 35.0,
+        "P_dBm": -11.049871298386691,
+        "OSNR_dB": 18.859091131589278
+      },
+      {
+        "z_km": 40.0,
+        "P_dBm": -12.049834342967337,
+        "OSNR_dB": 17.859128087008628
+      },
+      {
+        "z_km": 45.0,
+        "P_dBm": -13.049797387547983,
+        "OSNR_dB": 16.859165042427982
+      },
+      {
+        "z_km": 50.0,
+        "P_dBm": -14.04976043212863,
+        "OSNR_dB": 15.859201997847334
+      },
+      {
+        "z_km": 55.0,
+        "P_dBm": -15.049723476709273,
+        "OSNR_dB": 14.859238953266692
+      },
+      {
+        "z_km": 60.0,
+        "P_dBm": -16.049686521289914,
+        "OSNR_dB": 13.859275908686053
+      },
+      {
+        "z_km": 65.0,
+        "P_dBm": -17.049649565870546,
+        "OSNR_dB": 12.859312864105421
+      },
+      {
+        "z_km": 70.0,
+        "P_dBm": -18.049612610451177,
+        "OSNR_dB": 11.85934981952479
+      },
+      {
+        "z_km": 75.0,
+        "P_dBm": -19.04957565503181,
+        "OSNR_dB": 10.859386774944152
+      },
+      {
+        "z_km": 80.0,
+        "P_dBm": -20.049538699612448,
+        "OSNR_dB": 9.859423730363519
+      },
+      {
+        "z_km": 80.0,
+        "P_dBm": -4.046697085266434,
+        "OSNR_dB": 24.84084354537393
+      }
+    ]
+  }
+}

@@ -61,4 +61,10 @@ def fiber_ssfm(
     info["beta2"] = par["beta2"]
     info["gamma"] = par["gamma"]
     info["Pmean"] = float(xp.mean(xp.abs(Aout) ** 2))
+    
+    # Atenuación del ruido ASE acumulado
+    if "P_ASE_total" in info_in:
+        total_attenuation = xp.exp(-par["alpha"] * par["L"])
+        info["P_ASE_total"] = float(info_in["P_ASE_total"] * total_attenuation)
+    
     return Aout, info
