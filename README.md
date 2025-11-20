@@ -137,7 +137,7 @@ flowchart TD
 
 ## Instalación Paso a Paso
 
-### 1️⃣ Instalar Git (si no lo tienes)
+### Instalar Git (si no lo tienes)
 
 **Windows:**
 - Descarga desde: https://git-scm.com/download/win
