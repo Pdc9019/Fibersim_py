@@ -195,37 +195,43 @@ source .venv/bin/activate
 
 ### Paso 4: Instalar Dependencias
 
-#### Opción A: Solo CPU (instalación básica)
-
-```bash
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-#### Opción B: Con GPU (CuPy para aceleración)
-
-**IMPORTANTE**: Instala EXACTAMENTE en este orden:
+**IMPORTANTE**: Este simulador requiere GPU NVIDIA con CUDA. Instala EXACTAMENTE en este orden:
 
 **4.1. Instalar CUDA Toolkit 12.9**
    - Descarga CUDA 12.9 desde: https://developer.nvidia.com/cuda-12-9-0-download-archive
    - Selecciona tu sistema operativo y sigue el instalador
    - **CRÍTICO**: Debe ser versión 12.9, otras versiones pueden no ser compatibles
+   - Reinicia el sistema después de instalar
 
-**4.2. Instalar dependencias básicas**:
-   ```bash
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
+**4.2. Instalar dependencias Python**:
 
-**4.3. Instalar CuPy para CUDA 12.x**:
-   ```bash
-   pip install cupy-cuda12x
-   ```
+**Windows (PowerShell):**
+```powershell
+py -m pip install --upgrade pip
+py -m pip install -r requirements.txt
+py -m pip install cupy-cuda12x
+```
 
-**4.4. Verificar instalación**:
-   ```bash
-   python -c "import cupy as cp; print('CuPy version:', cp.__version__); print('CUDA available:', cp.cuda.is_available())"
-   ```
+**Linux/macOS:**
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+pip install cupy-cuda12x
+```
+
+**4.3. Verificar instalación**:
+
+**Windows (PowerShell):**
+```powershell
+py -c "import cupy as cp; print('CuPy version:', cp.__version__); print('CUDA available:', cp.cuda.is_available())"
+```
+
+**Linux/macOS:**
+```bash
+python3 -c "import cupy as cp; print('CuPy version:', cp.__version__); print('CUDA available:', cp.cuda.is_available())"
+```
+
+Si ves `CUDA available: True`, la instalación fue exitosa.
 
 ---
 
