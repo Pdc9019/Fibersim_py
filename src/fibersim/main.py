@@ -141,6 +141,7 @@ def _execute(
     num_traces: int = 50,
     group_by_quadrant: bool = True,
     show_slice_planes: bool = True,
+    do_waveform: bool = False,
 ):
     (
         xp,
@@ -403,6 +404,53 @@ def _execute(
 
     if do_eye:
         save_eyediagram(Aout_np, sps, delay_total, plots_p / "eye.png")
+    
+    # Guardar waveforms TX vs RX si está habilitado
+    if do_waveform:
+        try:
+            from .core import waveform as wf_module
+            
+            # Calcular segmento dinámico: mostrar exactamente 50 símbolos
+            # Esto se adapta automáticamente a cualquier tasa de símbolos
+            symbols_to_show = 50
+            Rb = parGlob['Rb']
+            Rs = Rb / math.log2(M_tx)  # Symbol rate
+            T_symbol = 1.0 / Rs  # Duración de un símbolo en segundos
+            segment_duration_us = symbols_to_show * T_symbol * 1e6  # Convertir a microsegundos
+            
+            # Guardar HDF5 con metadata
+            wf_metadata = {
+                'Fs': parGlob['Fs'],
+                'sps': sps,
+                'Ptx': parGlob['Ptx'],
+                'Nsym': parGlob['Nsym'],
+                'Rb': parGlob['Rb'],
+                'Rs': Rs,
+                'mod': mod,
+                'rx': rx_mode,
+                'backend': backend_info,
+                'symbols_displayed': symbols_to_show
+            }
+            wf_module.save_waveforms_hdf5(
+                tx_signal=_to_numpy_if_needed(Ein, xp),
+                rx_signal=Aout_np,
+                filepath=plots_p / "waveforms.h5",
+                metadata=wf_metadata
+            )
+            
+            # Crear gráfico comparativo con segmento dinámico
+            wf_module.plot_waveform_comparison(
+                tx_signal=_to_numpy_if_needed(Ein, xp),
+                rx_signal=Aout_np,
+                sps=sps,
+                Fs=parGlob['Fs'],
+                segment_start_us=0.0,  # Siempre desde el inicio
+                segment_length_us=segment_duration_us,
+                filepath=plots_p / "waveform_comparison.png"
+            )
+            rprint(f"[green]Waveforms guardados: {symbols_to_show} símbolos ({segment_duration_us:.2f} μs)[/green]")
+        except Exception as e:
+            rprint(f"[yellow]Advertencia: No se pudieron guardar waveforms: {e}[/yellow]")
 
     rprint(f"[bold cyan]{backend_info}[/bold cyan]")
     rprint(f"[bold green]Listo[/bold green]: log en [cyan]{outdir}/{log_name}[/cyan], "

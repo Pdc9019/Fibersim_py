@@ -641,9 +641,12 @@ with col1: insertion_db = st.number_input("Inserción [dB]", value=1.0, step=0.1
 with col2: splice_db    = st.number_input("Fusión [dB]", value=0.2, step=0.1)
 with col3: do_const     = st.checkbox("Constelaciones", value=True)
 with col4: do_eye       = st.checkbox("Eye final", value=True)
-with col5: 
-    step_plot2d_km = st.number_input("Graficar 2D cada [km]", value=5.0, min_value=0.5, step=0.5,
-                                    help="Cada cuántos km graficar constelaciones 2D. Captura siempre cada 0.5 km.")
+with col5: do_waveform  = st.checkbox("Waveforms TX/RX", value=False,
+                                      help="Visualiza y exporta señales transmitida vs recibida")
+
+st.number_input("Graficar 2D cada [km]", value=5.0, min_value=0.5, step=0.5,
+                key='step_plot2d_km',
+                help="Cada cuántos km graficar constelaciones 2D. Captura siempre cada 2 km.")
 
 st.markdown("##### Visualización 3D de Constelaciones")
 
@@ -904,7 +907,7 @@ if st.button("Ejecutar simulación", type="primary"):
                 use_splice_loss=True,
                 do_const=bool(do_const),
                 step_const_km=float(step_const_km),
-                step_plot2d_km=float(step_plot2d_km),
+                step_plot2d_km=float(st.session_state.get('step_plot2d_km', 5.0)),
                 do_eye=bool(do_eye),
                 plots_dir=plots_dir,
                 do_const3d=False, const3d_every=1, const3d_pts=1000,
@@ -914,6 +917,7 @@ if st.button("Ejecutar simulación", type="primary"):
                 trace_symbols=bool(trace_symbols),
                 num_traces=int(num_traces if trace_symbols else 50),
                 group_by_quadrant=bool(group_by_quadrant),
+                do_waveform=bool(do_waveform),
             )
             st.session_state["last_backend"] = backend_info
             st.success("Simulación terminada")
@@ -1128,6 +1132,56 @@ with cols[1]:
     if png2.exists(): st.image(str(png2), caption="Evolución de potencia")
 with cols[2]:
     if eye.exists():  st.image(str(eye), caption="Eye Diagram")
+
+# Waveforms TX/RX si existen
+waveform_plot = plots_p / "waveform_comparison.png"
+waveform_h5 = plots_p / "waveforms.h5"
+if waveform_plot.exists():
+    st.divider()
+    st.markdown("### Waveforms TX vs RX")
+    st.image(str(waveform_plot), caption="Comparación de señales: Transmitida (TX) vs Recibida (RX) - Segmento de 0.5 μs")
+    
+    # Botón de descarga en formato CSV (completo)
+    if waveform_h5.exists():
+        try:
+            import h5py
+            import io
+            
+            # Convertir HDF5 a CSV
+            csv_buffer = io.StringIO()
+            csv_buffer.write("# Waveforms TX/RX - FiberSim\n")
+            csv_buffer.write("# Columnas: sample_idx, tx_real, tx_imag, rx_real, rx_imag\n")
+            
+            with h5py.File(waveform_h5, 'r') as f:
+                tx_real = f['tx/real'][:]
+                tx_imag = f['tx/imag'][:]
+                rx_real = f['rx/real'][:]
+                rx_imag = f['rx/imag'][:]
+                
+                # Escribir metadata como comentarios
+                csv_buffer.write(f"# Fs = {f.attrs.get('Fs', 'N/A')} Hz\n")
+                csv_buffer.write(f"# sps = {f.attrs.get('sps', 'N/A')}\n")
+                csv_buffer.write(f"# Modulacion = {f.attrs.get('mod', 'N/A')}\n")
+                csv_buffer.write("#\n")
+                
+                # Escribir datos
+                for i in range(len(tx_real)):
+                    rx_r = rx_real[i] if i < len(rx_real) else 0.0
+                    rx_i = rx_imag[i] if i < len(rx_imag) else 0.0
+                    csv_buffer.write(f"{i},{tx_real[i]:.6e},{tx_imag[i]:.6e},{rx_r:.6e},{rx_i:.6e}\n")
+            
+            csv_data = csv_buffer.getvalue()
+            
+            st.download_button(
+                label="📥 Descargar Waveforms Completos (CSV)",
+                data=csv_data,
+                file_name="waveforms_complete.csv",
+                mime="text/csv",
+                help="Archivo CSV con todas las muestras TX/RX. Compatible con Excel, MATLAB, Python, etc.",
+                use_container_width=True
+            )
+        except Exception as e:
+            st.warning(f"No se pudo generar CSV: {e}")
 
 # Perfiles z: preferir medidos del último log; si no, estimado analítico
 st.divider()
