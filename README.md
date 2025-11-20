@@ -130,14 +130,15 @@ flowchart TD
 - typer, rich, pydantic 2.x
 
 ### Opcional para GPU (aceleración CuPy):
-- CUDA Toolkit 11.x o 12.x
+- CUDA Toolkit 12.9 (versión específica requerida)
 - Driver NVIDIA compatible
+- Tarjeta gráfica NVIDIA con soporte CUDA
 
 ---
 
 ## Instalación Paso a Paso
 
-### 1️⃣ Instalar Git (si no lo tienes)
+### Paso 1: Instalar Git (si no lo tienes)
 
 **Windows:**
 - Descarga desde: https://git-scm.com/download/win
@@ -161,7 +162,7 @@ brew install git
 
 ---
 
-### 2️⃣ Clonar el Repositorio
+### Paso 2: Clonar el Repositorio
 
 Abre una terminal (PowerShell en Windows, Terminal en Linux/macOS) y ejecuta:
 
@@ -172,7 +173,7 @@ cd Fibersim_py
 
 ---
 
-### 3️⃣ Crear un Entorno Virtual
+### Paso 3: Crear un Entorno Virtual
 
 **Windows (PowerShell):**
 ```powershell
@@ -190,7 +191,7 @@ source .venv/bin/activate
 
 ---
 
-### 4️⃣ Instalar Dependencias
+### Paso 4: Instalar Dependencias
 
 #### Opción A: Solo CPU (instalación básica)
 
@@ -201,30 +202,27 @@ pip install -r requirements.txt
 
 #### Opción B: Con GPU (CuPy para aceleración)
 
-**IMPORTANTE**: Instala en este orden:
+**IMPORTANTE**: Instala EXACTAMENTE en este orden:
 
-1. **Primero instala CUDA Toolkit** desde NVIDIA:
-   - CUDA 12.x: https://developer.nvidia.com/cuda-downloads
-   - CUDA 11.x: https://developer.nvidia.com/cuda-11-8-0-download-archive
+**4.1. Instalar CUDA Toolkit 12.9**
+   - Descarga CUDA 12.9 desde: https://developer.nvidia.com/cuda-12-9-0-download-archive
+   - Selecciona tu sistema operativo y sigue el instalador
+   - **CRÍTICO**: Debe ser versión 12.9, otras versiones pueden no ser compatibles
 
-2. **Luego instala las dependencias básicas**:
+**4.2. Instalar dependencias básicas**:
    ```bash
    pip install --upgrade pip
    pip install -r requirements.txt
    ```
 
-3. **Finalmente instala CuPy** (según tu versión de CUDA):
+**4.3. Instalar CuPy para CUDA 12.x**:
    ```bash
-   # Para CUDA 12.x
    pip install cupy-cuda12x
-   
-   # O para CUDA 11.x
-   pip install cupy-cuda11x
    ```
 
-4. **Verifica la instalación**:
+**4.4. Verificar instalación**:
    ```bash
-   python -c "import cupy as cp; print(cp.__version__)"
+   python -c "import cupy as cp; print('CuPy version:', cp.__version__); print('CUDA available:', cp.cuda.is_available())"
    ```
 
 ---
@@ -262,5 +260,6 @@ La GUI se abrirá automáticamente en tu navegador en `http://localhost:8501`
 - Luego vuelve a intentar activar el entorno
 
 **CuPy no detecta la GPU**
-- Verifica que tu driver NVIDIA esté actualizado
-- Asegúrate de tener la versión de CuPy compatible con tu CUDA
+- Verifica que tengas CUDA Toolkit 12.9 instalado (no otra versión)
+- Asegúrate de tener el driver NVIDIA actualizado (versión 525.60.13 o superior)
+- Reinicia el sistema después de instalar CUDA
