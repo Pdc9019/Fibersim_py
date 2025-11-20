@@ -6,5 +6,5 @@ typer>=0.12
 rich>=13.0
 pytest>=8
 h5py>=3.11
-cupy-cuda12x>=13.0; platform_system=="Windows"
+cupy-cuda12x>=12.9; platform_system=="Windows"
 plotly>=5.20
