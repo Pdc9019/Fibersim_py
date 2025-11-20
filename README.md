@@ -119,73 +119,148 @@ flowchart TD
 
 ---
 
-## Requisitos
+## Requisitos del Sistema
 
-- Python 3.10 o superior
-- Windows, Linux o macOS
+- **Python 3.10 o superior**
+- **Git** (para clonar el repositorio)
+- **Sistema Operativo**: Windows, Linux o macOS
 
-Dependencias principales:
+### Dependencias principales:
 - numpy, scipy, matplotlib, plotly, streamlit
-- typer, rich
-- pydantic 2.x
+- typer, rich, pydantic 2.x
 
-Opcional para GPU:
-- instalar CUDA 12.9 desde: https://developer.nvidia.com/cuda-12-9-0-download-archive
-- cupy-cudaXX compatible con tu versión de CUDA
+### Opcional para GPU (aceleración CuPy):
+- CUDA Toolkit 11.x o 12.x
+- Driver NVIDIA compatible
 
-Archivo sugerido `requirements.txt`:
+---
 
-```txt
-numpy>=1.23
-scipy>=1.9
-matplotlib>=3.7
-plotly>=5.17
-streamlit>=1.30
-typer[all]>=0.9
-rich>=13.0
-pydantic>=2.4
-# GPU opcional, instala solo si tienes CUDA
-# cupy-cuda12x>=12.0
-# o
-# cupy-cuda11x>=12.0
+## Instalación Paso a Paso
+
+### 1️⃣ Instalar Git (si no lo tienes)
+
+**Windows:**
+- Descarga desde: https://git-scm.com/download/win
+- Ejecuta el instalador y sigue las opciones por defecto
+- Verifica en una terminal PowerShell:
+  ```powershell
+  git --version
+  ```
+
+**Linux (Debian/Ubuntu):**
+```bash
+sudo apt update
+sudo apt install git
+```
+
+**macOS:**
+```bash
+# Usando Homebrew
+brew install git
 ```
 
 ---
 
-## Instalación
+### 2️⃣ Clonar el Repositorio
 
-Clona el repo y crea un entorno:
+Abre una terminal (PowerShell en Windows, Terminal en Linux/macOS) y ejecuta:
 
 ```bash
-git clone https://github.com/pdc9019/FiberSim.git
-cd FiberSim
+git clone https://github.com/Pdc9019/Fibersim_py.git
+cd Fibersim_py
+```
 
-# venv de ejemplo
+---
+
+### 3️⃣ Crear un Entorno Virtual
+
+**Windows (PowerShell):**
+```powershell
 python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# Linux/macOS
-# source .venv/bin/activate
+.venv\Scripts\Activate.ps1
+```
 
+**Linux/macOS:**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+> **Nota**: El entorno virtual aísla las dependencias del proyecto. Verás `(.venv)` al inicio de tu terminal cuando esté activo.
+
+---
+
+### 4️⃣ Instalar Dependencias
+
+#### Opción A: Solo CPU (instalación básica)
+
+```bash
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-GPU opcional con CuPy: instala el wheel que corresponda a tu CUDA.
+#### Opción B: Con GPU (CuPy para aceleración)
 
-```bash
-# Ejemplos, elige uno
-pip install cupy-cuda12x
-# o
-pip install cupy-cuda11x
-```
+**IMPORTANTE**: Instala en este orden:
+
+1. **Primero instala CUDA Toolkit** desde NVIDIA:
+   - CUDA 12.x: https://developer.nvidia.com/cuda-downloads
+   - CUDA 11.x: https://developer.nvidia.com/cuda-11-8-0-download-archive
+
+2. **Luego instala las dependencias básicas**:
+   ```bash
+   pip install --upgrade pip
+   pip install -r requirements.txt
+   ```
+
+3. **Finalmente instala CuPy** (según tu versión de CUDA):
+   ```bash
+   # Para CUDA 12.x
+   pip install cupy-cuda12x
+   
+   # O para CUDA 11.x
+   pip install cupy-cuda11x
+   ```
+
+4. **Verifica la instalación**:
+   ```bash
+   python -c "import cupy as cp; print(cp.__version__)"
+   ```
 
 ---
 
 ## Ejecución de la GUI
 
-```bash
-# PowerShell (Windows): exporta PYTHONPATH para que 'src' se resuelva
+**Windows (PowerShell):**
+```powershell
 $env:PYTHONPATH = "src"
 streamlit run src/fibersim/gui/app.py
 ```
+
+**Linux/macOS:**
+```bash
+export PYTHONPATH="src"
+streamlit run src/fibersim/gui/app.py
+```
+
+La GUI se abrirá automáticamente en tu navegador en `http://localhost:8501`
+
+---
+
+## Solución de Problemas Comunes
+
+**Error: "git no se reconoce como comando"**
+- Reinicia la terminal después de instalar Git
+- En Windows, verifica que Git esté en el PATH del sistema
+
+**Error: "python no se reconoce como comando"**
+- En Windows usa `py` en lugar de `python`
+- En Linux/macOS usa `python3`
+
+**Error al activar entorno virtual (Windows PowerShell)**
+- Ejecuta: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
+- Luego vuelve a intentar activar el entorno
+
+**CuPy no detecta la GPU**
+- Verifica que tu driver NVIDIA esté actualizado
+- Asegúrate de tener la versión de CuPy compatible con tu CUDA

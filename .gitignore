@@ -1,1 +1,56 @@
+# Python environment
 .venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Outputs generados por el simulador
+logs/
+plots/
+build/
+
+# Configuraciones temporales de la GUI
+tmp_gui_config.json
+test_corrected_code.json
+
+# Scripts de debugging y validación (NO funcionales, solo pruebas)
+analyze_sim.py
+check_ase_accumulation.py
+debug_attenuation.py
+debug_ber_osnr.py
+debug_qpsk_formula.py
+debug_snr_ber_discrepancy.py
+demo_snr_ber_inconsistency.py
+final_diagnosis.py
+quick_check.py
+show_profile.py
+snr_ber_correction.py
+test_backend_fix.py
+test_ber_curves.py
+test_constellation_sampling.py
+test_power_scaling.py
+validate_ber_osnr.py
+validate_configs.py
+verify_chain_code.py
+verify_fix.py
+
+# Documentación de debugging (archivos MD de análisis)
+ANALISIS_SNR_BER_INCONSISTENCIA.md
+BACKEND_FIX_README.md
+CONSTELLATION_SAMPLING_ANALYSIS.md
+SOLUCION_SNR_BER_INCONSISTENCIA.md
+
+# Latex (proyecto de tesis, separado del simulador)
+Latex/
+
+# JSON de configuración de ejemplos específicos (mantener solo examples/configs/)
+fibracompensada_ejemplo1.json

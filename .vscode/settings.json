@@ -1,0 +1,116 @@
+{
+  // ========== LaTeX Workshop Configuration ==========
+  
+  // Receta de compilación personalizada para tu proyecto
+  "latex-workshop.latex.recipes": [
+    {
+      "name": "pdflatex (shell-escape) → bibtex → pdflatex × 2",
+      "tools": [
+        "pdflatex-shell",
+        "bibtex",
+        "pdflatex-shell",
+        "pdflatex-shell"
+      ]
+    },
+    {
+      "name": "pdflatex × 2 (sin minted)",
+      "tools": [
+        "pdflatex",
+        "pdflatex"
+      ]
+    }
+  ],
+
+  // Herramientas de compilación
+  "latex-workshop.latex.tools": [
+    {
+      "name": "pdflatex-shell",
+      "command": "pdflatex",
+      "args": [
+        "-synctex=1",
+        "-interaction=nonstopmode",
+        "-file-line-error",
+        "-shell-escape",
+        "-output-directory=%OUTDIR%",
+        "%DOC%"
+      ],
+      "env": {}
+    },
+    {
+      "name": "pdflatex",
+      "command": "pdflatex",
+      "args": [
+        "-synctex=1",
+        "-interaction=nonstopmode",
+        "-file-line-error",
+        "-output-directory=%OUTDIR%",
+        "%DOC%"
+      ],
+      "env": {}
+    },
+    {
+      "name": "bibtex",
+      "command": "bibtex",
+      "args": [
+        "%DOCFILE%"
+      ],
+      "env": {}
+    }
+  ],
+
+  // Configuración de archivos de salida
+  "latex-workshop.latex.outDir": "%DIR%/build",
+  "latex-workshop.latex.clean.fileTypes": [
+    "*.aux",
+    "*.bbl",
+    "*.blg",
+    "*.idx",
+    "*.ind",
+    "*.lof",
+    "*.lot",
+    "*.out",
+    "*.toc",
+    "*.acn",
+    "*.acr",
+    "*.alg",
+    "*.glg",
+    "*.glo",
+    "*.gls",
+    "*.ist",
+    "*.fls",
+    "*.log",
+    "*.fdb_latexmk",
+    "*.synctex.gz",
+    "*.run.xml",
+    "*.bcf",
+    "*.nav",
+    "*.snm",
+    "*.vrb",
+    "_minted*"
+  ],
+
+  // Compilación automática
+  "latex-workshop.latex.autoBuild.run": "onSave",
+  
+  // Visualizador PDF integrado
+  "latex-workshop.view.pdf.viewer": "tab",
+  "latex-workshop.view.pdf.internal.synctex.keybinding": "double-click",
+  
+  // Recetas de limpieza
+  "latex-workshop.latex.autoClean.run": "onBuilt",
+  
+  // Mensajes en español (si prefieres)
+  "latex-workshop.message.error.show": true,
+  "latex-workshop.message.warning.show": false,
+
+  // IntelliSense mejorado
+  "latex-workshop.intellisense.package.enabled": true,
+  "latex-workshop.intellisense.citation.label": "bibtex key",
+  
+  // Formato de código LaTeX
+  "latex-workshop.formatting.latex": "latexindent",
+  
+  // Archivo principal del proyecto
+  "latex-workshop.latex.rootFile.indicator": "% !TEX root",
+  "latex-workshop.latex.rootFile.useSubFile": false
+}
