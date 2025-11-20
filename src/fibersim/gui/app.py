@@ -190,7 +190,7 @@ div[data-testid="stHorizontalBlock"] { gap:.25rem; }
 if "chain" not in st.session_state:
     st.session_state.chain = []
 if "global" not in st.session_state:
-    st.session_state["global"] = dict(Rb=10e9, M=2, sps=8, Fs=80e9, Nsym=16384, Ptx=1e-3, lambda_nm=1550.0, mod="BPSK", rx="imdd", pol="sp")
+    st.session_state["global"] = dict(Rb=10e9, M=2, sps=8, Fs=80e9, Nsym=32768, Ptx=1e-3, lambda_nm=1550.0, mod="BPSK", rx="imdd", pol="sp")
 if "pulse" not in st.session_state:
     st.session_state["pulse"] = dict(type="RRC", roll=0.2, span=8)
 if "edit_idx" not in st.session_state:
@@ -335,7 +335,7 @@ with gcol:
         "Calidad de Simulación", 
         ["Rápida", "Media", "Alta"], 
         index=1,
-        help="Controla el número de símbolos: Rápida=8192, Media=16384, Alta=32768"
+        help="Controla el número de símbolos y precisión de BER: Rápida=16384, Media=32768, Alta=65536"
     )
     
     # Modulación
@@ -378,7 +378,7 @@ with gcol:
 
     # Aplicar valores
     g["sps"] = 8  # Fijo
-    g["Nsym"] = {"Rápida": 8192, "Media": 16384, "Alta": 32768}[calidad]
+    g["Nsym"] = {"Rápida": 16384, "Media": 32768, "Alta": 65536}[calidad]
     g["lambda_nm"] = float(lambda_nm)
     g["M"] = M_sel
     g["mod"] = {2: "BPSK", 4: "QPSK", 16: "16QAM"}[M_sel]
@@ -634,7 +634,7 @@ with colB:
         dz_override = None
 
 # Paso fijo de captura (no visible para el usuario)
-step_const_km = 0.5  # Siempre captura cada 0.5 km
+step_const_km = 2.0  # Captura cada 2 km (reducido para optimizar memoria GPU)
 
 col1, col2, col3, col4, col5 = st.columns(5)
 with col1: insertion_db = st.number_input("Inserción [dB]", value=1.0, step=0.1)

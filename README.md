@@ -10,6 +10,7 @@ Este documento describe el flujo completo del simulador desde la GUI, los compon
 - Orquestación: CLI/servicio en `src/fibersim/main.py` (función `_execute`).
 - Núcleo numérico: `src/fibersim/core` (PRBS, shaping RRC, fibra SSFM, EDFA, plots).
 - Esquema de configuración: `src/fibersim/schema.py` con Pydantic v2.
+- Modulaciones soportadas: BPSK, QPSK, 16QAM con pulsos Root-Raised Cosine (RRC).
 - Salidas: imágenes y HTML en `plots/`, log JSON con config normalizada y métricas en `logs/`.
 
 Motivación: separar GUI, orquestación y núcleo permite probar por CLI, alternar CPU/GPU y reutilizar funciones.
@@ -20,11 +21,11 @@ Motivación: separar GUI, orquestación y núcleo permite probar por CLI, altern
 
 La página principal ofrece:
 
-- Parámetros globales: Rb [Gbaud], Ptx [dBm], calidad (ajusta Nsym), y avanzado (sps, Nsym, modulación y receptor). Si M>2 (QPSK/16QAM) se fuerza receptor coherente.
-- Pulso: RRC con sliders de roll y span.
+- Parámetros globales: Rb [Gbaud], Ptx [dBm], calidad (ajusta Nsym), y avanzado (sps, Nsym, modulación y receptor). Modulaciones disponibles: BPSK, QPSK, 16QAM. Si M>2 (QPSK/16QAM) se fuerza receptor coherente.
+- Pulso: Root-Raised Cosine (RRC) con sliders de roll-off (β) y span. No se utilizan pulsos NRZ.
 - Builder de cadena: bloques FIBER y EDFA. Cada tarjeta permite mover, duplicar, borrar y editar parámetros.
-- Ejecución: flags de GPU, override de dz, pérdidas de inserción/fusión, snapshots de constelación, 3D, eye, y carpetas de salida.
-- Resultados: chips de resumen (backend, BER en porcentaje, SNR símbolo, OSNR), imágenes, 3D HTML, y perfiles z (medidos si están en el log; si no, estimados localmente).
+- Ejecución: flags de GPU, override de dz, pérdidas de inserción/fusión, snapshots de constelación, gráfico 3D interactivo, eye, y carpetas de salida.
+- Resultados: chips de resumen (backend, BER en porcentaje, SNR símbolo, OSNR), imágenes, gráfico 3D HTML de constelaciones a lo largo del enlace, y perfiles z (medidos si están en el log; si no, estimados localmente).
 - Carga de ejemplos: presets embebidos y detección automática de `examples/configs/*.json` válidos.
 
 Por qué así: controles simples por defecto, y avanzados opcionales. El builder evita errores de JSON a mano.
@@ -36,7 +37,7 @@ Por qué así: controles simples por defecto, y avanzados opcionales. El builder
 `SimConfig` tiene cuatro secciones:
 
 - `global`: Rb, M, sps, Fs, Nsym, Ptx, mod (BPSK/QPSK/16QAM), rx (imdd/coh), pol (sp/dp).
-- `pulse`: tipo (RRC), roll y span.
+- `pulse`: tipo Root-Raised Cosine (RRC únicamente), parámetros roll-off (β) y span.
 - `chain`: lista de bloques `fiber` o `edfa`.
 - `dsp` (opcional): parámetros para receptor coherente básico.
 
@@ -55,15 +56,15 @@ Decisiones: tipos y límites validan inputs en GUI y CLI, y ahorrar validaciones
 ## 4. Pipeline de simulación (desde `_execute`)
 
 1) Backend: CPU NumPy o GPU CuPy. Se recarga dinámicamente `core/array_api` y módulos para aplicar el backend elegido.
-2) PRBS y mapeo a símbolos: PRBS genera bits para M; `core/modem.map_bits_to_symbols` aplica Gray mapping y normaliza potencia media (BPSK/QPSK/16QAM).
-3) Shaping TX: `core/pulse.pulse_shaper` hace upsample y filtra con RRC; guarda `pulseDelay` y `sps`.
+2) PRBS y mapeo a símbolos: PRBS genera bits para M; `core/modem.map_bits_to_symbols` aplica Gray mapping y normaliza potencia media. Modulaciones soportadas: BPSK, QPSK, 16QAM.
+3) Shaping TX: `core/pulse.pulse_shaper` hace upsample y filtra con pulsos Root-Raised Cosine (RRC); guarda `pulseDelay` y `sps`. No se utilizan pulsos NRZ.
 4) Potencia de entrada: escala por `sqrt(Ptx)`.
 5) Cadena: `core/chain.run_chain` recorre bloques. Para fibra usa `core/fiber.fiber_ssfm` (split-step con kernel lineal y no lineal, atenuación). Para EDFA usa `core/edfa.edfa_block` (ganancia, ASE banda Rs). Guarda snapshots de constelación con el mismo filtro RX (RRC) y slicing determinista con `delay_samp = 2*pulseDelay`.
 6) RX y métricas:
    - IMDD BPSK: búsqueda de mejor retardo discreto en una ventana alrededor de `delay_samp` y cálculo de BER.
    - Coherente (QPSK/16QAM): slicing en `delay_samp`, normalización y alineación de fase global vs referencia, EVM, Q, BER y SNR a nivel de símbolo.
 7) Perfiles medidos: si hay snapshots, se arma `result.profile` con z[km], P[dBm] y OSNR si está disponible.
-8) Plots: constelaciones (grid y 3D HTML) y potencia vs z. Eye final opcional.
+8) Plots: constelaciones en grid 2D, gráfico 3D interactivo HTML que muestra la evolución de las constelaciones a lo largo del enlace, y potencia vs z. Eye final opcional.
 9) Log: config normalizada y `result` en `logs/simlog_*.json`.
 
 Por qué así: slicing determinista evita dobles contajes de delay. La ruta coherente simplificada (normalizar + fase global) es robusta para QPSK/16QAM sin DSP pesado.
@@ -75,8 +76,9 @@ Por qué así: slicing determinista evita dobles contajes de delay. La ruta cohe
 - Array API: unifica NumPy y CuPy, y SciPy/cupyx.scipy para filtros; permite cambiar entre CPU/GPU sin bifurcar código.
 - SSFM: pasos con medio paso lineal (FFT, kernel Hhalf) y paso no lineal; atenuación por medio paso. `dz` override desde la GUI acelera pruebas.
 - EDFA: modelo simple con ASE sobre Rs; acumulación de OSNR en perfiles estimados y en resultados medidos si se instrumenta en la cadena.
-- Modem: Gray mapping correcto (QPSK con XOR en rama Q), constelaciones de potencia unitaria, normalización y alineación de fase, BER/EVM/Q confiables.
-- Snapshots: se filtra con el mismo RRC RX y se samplea con `delay_samp` consistente. Para visualización, se normalizan individualmente sin afectar métricas.
+- Modem: Gray mapping correcto (QPSK con XOR en rama Q), constelaciones de potencia unitaria, normalización y alineación de fase, BER/EVM/Q confiables. Soporta BPSK, QPSK y 16QAM.
+- Pulsos: únicamente Root-Raised Cosine (RRC) con parámetros configurables de roll-off y span. No se utilizan pulsos NRZ.
+- Snapshots: se filtra con el mismo RRC RX y se samplea con `delay_samp` consistente. Para visualización en gráfico 3D, se normalizan individualmente sin afectar métricas.
 
 ---
 
