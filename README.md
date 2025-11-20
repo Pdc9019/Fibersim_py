@@ -179,7 +179,7 @@ cd Fibersim_py
 
 **Windows (PowerShell):**
 ```powershell
-python -m venv .venv
+py -m venv .venv
 .venv\Scripts\Activate.ps1
 ```
 
