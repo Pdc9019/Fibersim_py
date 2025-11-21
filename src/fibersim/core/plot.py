@@ -326,19 +326,40 @@ def save_constellations_3d_html(consSym, consZ_m, outpath: Path,
 
     if trace_symbols:
         # MODO TRAYECTORIAS: Seguir símbolos individuales
-        num_symbols = slices[0][0].size
+        # IMPORTANTE: Usar el mínimo número de símbolos entre todos los slices
+        # para evitar accesos fuera de rango que generan puntos en (0,0)
+        num_symbols = min(s.size for s, _ in slices)
+        
+        # Truncar todos los slices al mismo tamaño para consistencia
+        slices = [(s[:num_symbols], z_km) for s, z_km in slices]
+        
         z_positions = np.array([z_km for _, z_km in slices])
         
         # Calcular límites para ejes
         all_symbols = np.concatenate([s for s, _ in slices])
-        xlim = lim_rob(all_symbols.real)
-        ylim = lim_rob(all_symbols.imag)
+        
+        # Filtrar símbolos anómalos cercanos a (0,0) antes de calcular límites
+        magnitudes = np.abs(all_symbols)
+        mag_threshold = np.percentile(magnitudes, 1.0) * 0.1  # 10% del percentil 1
+        valid_symbols = all_symbols[magnitudes > mag_threshold]
+        
+        if len(valid_symbols) > 0:
+            xlim = lim_rob(valid_symbols.real)
+            ylim = lim_rob(valid_symbols.imag)
+        else:
+            xlim = lim_rob(all_symbols.real)
+            ylim = lim_rob(all_symbols.imag)
+        
         zmin, zmax = float(np.min(z_positions)), float(np.max(z_positions))
         
         if group_by_quadrant:
             # Agrupar símbolos por región inicial (adaptativo a BPSK/QPSK/16-QAM)
             initial_symbols = slices[0][0]
             regions = [assign_region_adaptive(sym, modulation_type) for sym in initial_symbols]
+            
+            # Detectar magnitud promedio esperada (para filtrar anomalías)
+            expected_magnitude = np.median(np.abs(initial_symbols))
+            min_valid_magnitude = expected_magnitude * 0.05  # 5% de la magnitud esperada
             
             # Crear trazas agrupadas por región
             for r in range(num_regions):
@@ -352,6 +373,12 @@ def save_constellations_3d_html(consSym, consZ_m, outpath: Path,
                     traj_I = [s[sym_idx].real for s, _ in slices]
                     traj_Q = [s[sym_idx].imag for s, _ in slices]
                     traj_Z = z_positions.tolist()
+                    
+                    # FILTRO: Detectar y omitir trayectorias con puntos anómalos en (0,0)
+                    traj_magnitudes = np.sqrt(np.array(traj_I)**2 + np.array(traj_Q)**2)
+                    if np.any(traj_magnitudes < min_valid_magnitude):
+                        # Esta trayectoria tiene puntos anómalos, omitirla
+                        continue
                     
                     # CAMBIO: Z ahora es X (horizontal), I es Y, Q es Z (vertical)
                     fig.add_trace(go.Scatter3d(
@@ -368,11 +395,20 @@ def save_constellations_3d_html(consSym, consZ_m, outpath: Path,
                     ))
         else:
             # Modo original: color basado en fase inicial
+            initial_symbols = slices[0][0]
+            expected_magnitude = np.median(np.abs(initial_symbols))
+            min_valid_magnitude = expected_magnitude * 0.05
+            
             for sym_idx in range(num_symbols):
                 # Extraer la trayectoria del símbolo sym_idx a través de todos los slices
                 traj_I = [s[sym_idx].real for s, _ in slices]
                 traj_Q = [s[sym_idx].imag for s, _ in slices]
                 traj_Z = z_positions.tolist()
+                
+                # FILTRO: Omitir trayectorias con puntos anómalos
+                traj_magnitudes = np.sqrt(np.array(traj_I)**2 + np.array(traj_Q)**2)
+                if np.any(traj_magnitudes < min_valid_magnitude):
+                    continue
                 
                 # Color basado en la posición inicial del símbolo (para identificarlo)
                 initial_phase = np.angle(slices[0][0][sym_idx])
@@ -394,24 +430,38 @@ def save_constellations_3d_html(consSym, consZ_m, outpath: Path,
         initial_syms = slices[0][0]
         final_syms = slices[-1][0]
         
-        # CAMBIO: Z es X (horizontal)
-        fig.add_trace(go.Scatter3d(
-            name="Constelación Tx",
-            x=np.full(num_symbols, z_positions[0]),  # Distancia inicial
-            y=initial_syms.real,  # I
-            z=initial_syms.imag,  # Q
-            mode="markers",
-            marker=dict(size=8, color="lime", symbol="diamond", opacity=1.0,
-                       line=dict(width=2, color="white")),
-            hovertemplate="Tx<br>I=%{y:.4f}<br>Q=%{z:.4f}<extra></extra>",
-            showlegend=True,
-        ))
+        # Filtrar símbolos anómalos en marcadores TX/RX
+        expected_magnitude = np.median(np.abs(initial_syms))
+        min_valid_magnitude = expected_magnitude * 0.05
         
-        fig.add_trace(go.Scatter3d(
-            name="Constelación Rx",
-            x=np.full(num_symbols, z_positions[-1]),  # Distancia final
-            y=final_syms.real,  # I
-            z=final_syms.imag,  # Q
+        # Crear máscaras para símbolos válidos
+        valid_tx_mask = np.abs(initial_syms) > min_valid_magnitude
+        valid_rx_mask = np.abs(final_syms) > min_valid_magnitude
+        
+        # Aplicar filtros
+        valid_initial_syms = initial_syms[valid_tx_mask]
+        valid_final_syms = final_syms[valid_rx_mask]
+        
+        # CAMBIO: Z es X (horizontal)
+        if len(valid_initial_syms) > 0:
+            fig.add_trace(go.Scatter3d(
+                name="Constelación Tx",
+                x=np.full(len(valid_initial_syms), z_positions[0]),  # Distancia inicial
+                y=valid_initial_syms.real,  # I
+                z=valid_initial_syms.imag,  # Q
+                mode="markers",
+                marker=dict(size=8, color="lime", symbol="diamond", opacity=1.0,
+                           line=dict(width=2, color="white")),
+                hovertemplate="Tx<br>I=%{y:.4f}<br>Q=%{z:.4f}<extra></extra>",
+                showlegend=True,
+            ))
+        
+        if len(valid_final_syms) > 0:
+            fig.add_trace(go.Scatter3d(
+                name="Constelación Rx",
+                x=np.full(len(valid_final_syms), z_positions[-1]),  # Distancia final
+                y=valid_final_syms.real,  # I
+                z=valid_final_syms.imag,  # Q
             mode="markers",
             marker=dict(size=8, color="red", symbol="diamond", opacity=1.0,
                        line=dict(width=2, color="white")),

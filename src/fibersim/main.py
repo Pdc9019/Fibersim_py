@@ -243,12 +243,14 @@ def _execute(
         # Sample to symbols deterministically around measured delay
         s_hat = modem.slice_to_symbols(Aout_np, sps=sps, delay_samp=delay_guess, Nsym=Nsym)
         delay_total = int(delay_guess)
-        # For coherent receivers (BPSK/QPSK/16QAM) normalize and align phase vs tx reference
-        # CRITICAL: BPSK coherent también necesita normalización y alineación de portadora
-        if M_tx >= 2:  # CAMBIADO: era M_tx > 2, ahora incluye BPSK (M_tx=2)
-            s_hat = modem.normalize_constellation(s_hat, None)
-            # tx reference already has unit power; ensure same truncation length
-            tx_ref = syms_np[: len(s_hat)]
+        # For coherent receivers: normalize constellation
+        s_hat = modem.normalize_constellation(s_hat, None)
+        # tx reference already has unit power; ensure same truncation length
+        tx_ref = syms_np[: len(s_hat)]
+        # For QPSK/16QAM: apply carrier phase alignment
+        # BPSK NO necesita carrier_phase_align porque ber_from_symbols
+        # ya hace su propia alineación considerando la ambigüedad de π
+        if M_tx > 2:  # Solo para QPSK (4) y 16QAM (16)
             s_hat = modem.carrier_phase_align(s_hat, tx_ref)
         # Metrics
         BER_est = modem.ber_from_symbols(syms_np[: len(s_hat)], s_hat, M=M_tx)
@@ -323,8 +325,24 @@ def _execute(
         "profile": profile,
     }
 
+    # Actualizar cfg para reflejar dz_override si se usó
+    if dz is not None:
+        cfg_copy = dict(cfg)
+        cfg_copy["global"] = dict(cfg["global"])
+        cfg_copy["global"]["dz_global_override"] = dz
+        # También actualizar dz en cada bloque de fibra para que el log sea consistente
+        cfg_copy["chain"] = []
+        for blk in cfg["chain"]:
+            blk_copy = dict(blk)
+            if blk.get("type") == "fiber":
+                blk_copy["par"] = dict(blk.get("par", {}))
+                blk_copy["par"]["dz"] = dz
+            cfg_copy["chain"].append(blk_copy)
+    else:
+        cfg_copy = cfg
+
     from .io import write_simlog
-    write_simlog(outdir_p / log_name, cfg, result, elapsed)
+    write_simlog(outdir_p / log_name, cfg_copy, result, elapsed)
 
     # Plots
     if do_const and len(diag.get("consSym", [])) > 0:

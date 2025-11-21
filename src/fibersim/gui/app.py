@@ -711,7 +711,7 @@ plots_dir = st.text_input("Carpeta de plots", value="plots")
 outdir    = st.text_input("Carpeta de logs", value="logs")
 
 # ========== VALIDACIÓN OPCIONAL DE PARÁMETROS (COLAPSABLE) ==========
-with st.expander("🔍 Validar Configuración (opcional)", expanded=False):
+with st.expander("Validar Configuración (opcional)", expanded=False):
     st.caption("Validación básica de parámetros físicos antes de ejecutar. "
               "Son sugerencias, no restricciones. El simulador es un playground experimental.")
     
@@ -1173,7 +1173,7 @@ if waveform_plot.exists():
             csv_data = csv_buffer.getvalue()
             
             st.download_button(
-                label="📥 Descargar Waveforms Completos (CSV)",
+                label="Descargar Waveforms Completos (CSV)",
                 data=csv_data,
                 file_name="waveforms_complete.csv",
                 mime="text/csv",
