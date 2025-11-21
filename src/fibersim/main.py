@@ -418,6 +418,9 @@ def _execute(
             T_symbol = 1.0 / Rs  # Duración de un símbolo en segundos
             segment_duration_us = symbols_to_show * T_symbol * 1e6  # Convertir a microsegundos
             
+            # Calcular cantidad de muestras para el segmento
+            segment_length_samples = int(symbols_to_show * sps)
+            
             # Guardar HDF5 con metadata
             wf_metadata = {
                 'Fs': parGlob['Fs'],
@@ -435,7 +438,9 @@ def _execute(
                 tx_signal=_to_numpy_if_needed(Ein, xp),
                 rx_signal=Aout_np,
                 filepath=plots_p / "waveforms.h5",
-                metadata=wf_metadata
+                metadata=wf_metadata,
+                segment_start=0,
+                segment_length=segment_length_samples
             )
             
             # Crear gráfico comparativo con segmento dinámico
