@@ -522,17 +522,22 @@ st.markdown("---")
 
 st.markdown("### Configuración de la Cadena del Enlace")
 
-c1, c2, c3 = st.columns([1,1,2])
+c1, c2, c3, c4 = st.columns([1,1,1,2])
 with c1:
-    if st.button("Añadir FIBER", use_container_width=True):
+    if st.button("Añadir Fibra", use_container_width=True, type="primary"):
         blk = FiberBlock(type="fiber",
                          par=FiberPar(L=40e3, beta2=-2.1e-26, gamma=1.3e-3, dz=1.0, alpha=4.6e-5)).model_dump()
         ensure_uid(blk); st.session_state.chain.append(blk)
 with c2:
-    if st.button("Añadir EDFA", use_container_width=True):
+    if st.button("Añadir EDFA", use_container_width=True, type="primary"):
         blk = EdfaBlock(type="edfa", par=EdfaPar(G_dB=10.0, nsp=2.5)).model_dump()
         ensure_uid(blk); st.session_state.chain.append(blk)
 with c3:
+    if st.button("Limpiar Todo", use_container_width=True, type="secondary"):
+        st.session_state.chain = []
+        st.session_state.edit_idx = None
+        st.rerun()
+with c4:
     cards_per_row = st.slider("Tarjetas por fila", min_value=1, max_value=3, value=3, help="Ajusta el zoom de la grilla")
 
 columns_grid = st.columns(cards_per_row)
@@ -540,7 +545,7 @@ for i, blk in enumerate(st.session_state.chain):
     ensure_uid(blk)
     col = columns_grid[i % cards_per_row]
     with col:
-        title = "FIBER" if blk["type"] == "fiber" else "EDFA"
+        title = "Fibra" if blk["type"] == "fiber" else "EDFA"
         badge_cls = "fiber" if blk["type"] == "fiber" else "edfa"
         subtitle = summarize_block(blk)
 
@@ -579,7 +584,7 @@ ei = st.session_state.edit_idx
 if ei is not None and 0 <= ei < len(st.session_state.chain):
     blk = st.session_state.chain[ei]
     st.divider()
-    st.subheader(f"Editar bloque #{ei+1} - {'FIBER' if blk['type']=='fiber' else 'EDFA'}")
+    st.subheader(f"Editar bloque #{ei+1} - {'Fibra' if blk['type']=='fiber' else 'EDFA'}")
 
     move_to = st.number_input("Mover a posición", min_value=1, max_value=len(st.session_state.chain), value=ei+1, step=1)
     cpos1, _ = st.columns([0.2, 0.8])
@@ -616,33 +621,52 @@ with colA:
     gpu = st.toggle("Usar GPU CuPy", value=True)
 with colB: 
     use_dz_override = st.checkbox(
-        "Forzar dz global (sobrescribe config)", 
-        value=False,
-        help="CRÍTICO: El paso SSFM (dz) afecta dramáticamente el tiempo de ejecución. Valores pequeños (~1m) = alta precisión pero MUY lento. Valores grandes (~100m) = rápido pero menos preciso."
+        "Forzar dz global", 
+        value=True,  # Activado por defecto
+        help="""**Paso SSFM (Split-Step Fourier Method)**: Controla el tamaño del paso espacial usado en la simulación numérica de propagación en fibra óptica.
+
+**¿Qué hace?**
+- Sobrescribe el parámetro 'dz' de TODOS los bloques de fibra en la cadena
+- Define cada cuántos metros se calculan los efectos lineales (dispersión) y no lineales (SPM, XPM)
+
+**Precisión vs Velocidad:**
+- **dz pequeño (1-10 m)**: Alta precisión, captura efectos no lineales sutiles, pero EXTREMADAMENTE lento (horas en enlaces largos)
+- **dz medio (10-100 m)**: Balance óptimo para la mayoría de simulaciones
+- **dz grande (100-500 m)**: Rápido, adecuado para enlaces cortos o exploración inicial
+
+**Recomendación:** 
+- Para enlaces <100 km: 20-50 m
+- Para enlaces 100-400 km: 50-100 m  
+- Para enlaces >400 km: 100-200 m
+
+**Impacto en tiempo:** Un enlace de 400 km con dz=10 m requiere 40,000 pasos (~30+ min). Con dz=100 m solo 4,000 pasos (~3-5 min)."""
     )
     if use_dz_override:
-        st.warning("ADVERTENCIA: dz bajo (<10 m) puede tardar horas en enlaces largos")
         dz_override = st.number_input(
             "Paso SSFM [m]", 
-            value=100.0,  # Valor por defecto cambiado de 1.0 a 100.0
+            value=50.0,
             min_value=1.0, 
             max_value=2000.0, 
             step=10.0,
             help="Tamaño de paso SSFM. Rápido: 100-500m | Balance: 10-100m | Preciso: 1-10m"
         )
+        # Advertencia solo si dz <= 10
+        if dz_override <= 10.0:
+            st.warning("⚠️ ADVERTENCIA: dz bajo (≤10 m) puede tardar horas en enlaces largos")
     else:
         dz_override = None
 
 # Paso fijo de captura (no visible para el usuario)
 step_const_km = 2.0  # Captura cada 2 km (reducido para optimizar memoria GPU)
 
-col1, col2, col3, col4, col5 = st.columns(5)
+col1, col2 = st.columns(2)
 with col1: insertion_db = st.number_input("Inserción [dB]", value=1.0, step=0.1)
 with col2: splice_db    = st.number_input("Fusión [dB]", value=0.2, step=0.1)
-with col3: do_const     = st.checkbox("Constelaciones", value=True)
-with col4: do_eye       = st.checkbox("Eye final", value=True)
-with col5: do_waveform  = st.checkbox("Waveforms TX/RX", value=False,
-                                      help="Visualiza y exporta señales transmitida vs recibida")
+
+# Plots siempre activados (evita confusión con resultados de ejecuciones previas)
+do_const = True
+do_eye = True
+do_waveform = True
 
 st.number_input("Graficar 2D cada [km]", value=5.0, min_value=0.5, step=0.5,
                 key='step_plot2d_km',
@@ -707,8 +731,9 @@ with colh5:
     
     group_by_quadrant = st.checkbox(group_label, value=True, help=group_help)
 
-plots_dir = st.text_input("Carpeta de plots", value="plots")
-outdir    = st.text_input("Carpeta de logs", value="logs")
+# Carpetas fijas para plots y logs (simplificación de interfaz)
+plots_dir = "plots"
+outdir = "logs"
 
 # ========== VALIDACIÓN OPCIONAL DE PARÁMETROS (COLAPSABLE) ==========
 with st.expander("Validar Configuración (opcional)", expanded=False):
@@ -1122,16 +1147,24 @@ with st.expander("Resumen de la última ejecución", expanded=True):
 # 3D interactivo (HTML) y PNGs existentes
 cands = sorted(plots_p.glob("constelaciones_3d*.html"), key=lambda p: p.stat().st_mtime, reverse=True)
 if cands:
+    st.markdown("### Evolución 3D de constelaciones a lo largo del enlace")
     html = cands[0].read_text(encoding="utf-8")
     components.html(html, height=800, scrolling=False)
 
-cols = st.columns(3)
-with cols[0]:
-    if png1.exists(): st.image(str(png1), caption="Constelaciones (grid)")
-with cols[1]:
-    if png2.exists(): st.image(str(png2), caption="Evolución de potencia")
-with cols[2]:
-    if eye.exists():  st.image(str(eye), caption="Eye Diagram")
+# Sección de gráficos principales - organizados horizontalmente con mismo tamaño
+st.divider()
+st.markdown("### Gráficos de Resultados")
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    if png1.exists(): 
+        st.image(str(png1), caption="Constelaciones (grid)", use_container_width=True)
+with col2:
+    if png2.exists(): 
+        st.image(str(png2), caption="Evolución de potencia", use_container_width=True)
+with col3:
+    if eye.exists():  
+        st.image(str(eye), caption="Eye Diagram", use_container_width=True)
 
 # Waveforms TX/RX si existen
 waveform_plot = plots_p / "waveform_comparison.png"
@@ -1139,7 +1172,7 @@ waveform_h5 = plots_p / "waveforms.h5"
 if waveform_plot.exists():
     st.divider()
     st.markdown("### Waveforms TX vs RX")
-    st.image(str(waveform_plot), caption="Comparación de señales: Transmitida (TX) vs Recibida (RX) - Segmento de 0.5 μs")
+    st.image(str(waveform_plot), caption="Comparación de señales: Transmitida (TX) vs Recibida (RX)", use_container_width=True)
     
     # Botón de descarga en formato CSV (completo)
     if waveform_h5.exists():

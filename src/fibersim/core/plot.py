@@ -136,7 +136,8 @@ def save_constellations_3d_html(consSym, consZ_m, outpath: Path,
                                 trace_symbols: bool = True,
                                 num_traces: int = 50,
                                 show_slice_planes: bool = True,
-                                group_by_quadrant: bool = True):
+                                group_by_quadrant: bool = True,
+                                chain: list = None):
     """
     Visualización 3D interactiva de constelaciones.
     
@@ -146,6 +147,7 @@ def save_constellations_3d_html(consSym, consZ_m, outpath: Path,
         num_traces: Número de símbolos a seguir (solo si trace_symbols=True).
         show_slice_planes: Si True, muestra planos semitransparentes en z-slices clave.
         group_by_quadrant: Si True, agrupa símbolos por su cuadrante inicial (mismo color por cuadrante).
+        chain: Lista de bloques (fiber/edfa) para marcar posiciones en el gráfico.
     """
     import numpy as np
     import plotly.graph_objects as go
@@ -217,9 +219,10 @@ def save_constellations_3d_html(consSym, consZ_m, outpath: Path,
             # Usar magnitudes absolutas de I y Q para detectar nivel interno vs externo
             abs_I, abs_Q = abs(I), abs(Q)
             # Umbral para separar niveles (ajustar según normalización)
-            # En 16-QAM normalizado: niveles en ±1, ±3 → umbral en 2
-            threshold = 1.5
-            inner_I = 1 if abs_I < threshold else 0  # 1 = nivel interno (±1), 0 = nivel externo (±3)
+            # En 16-QAM normalizado: niveles en ±1/√10 ≈ ±0.316, ±3/√10 ≈ ±0.949
+            # Umbral en punto medio: 2/√10 ≈ 0.632
+            threshold = 2.0 / np.sqrt(10.0)  # ≈ 0.632
+            inner_I = 1 if abs_I < threshold else 0  # 1 = nivel interno (±1/√10), 0 = nivel externo (±3/√10)
             inner_Q = 1 if abs_Q < threshold else 0
             sub_region = inner_I * 2 + inner_Q  # 0, 1, 2, 3
             return base * 4 + sub_region  # 0-15 (16 regiones distintas)
@@ -502,6 +505,82 @@ def save_constellations_3d_html(consSym, consZ_m, outpath: Path,
                     showlegend=False,
                 ))
         
+        # Añadir planos sutiles para marcar EDFAs y cambios de fibra
+        if chain is not None:
+            z_accum_km = 0.0
+            prev_fiber_params = None
+            
+            # Reutilizar mallas para todos los planos (optimización de memoria)
+            I_range = np.linspace(ylim[0], ylim[1], 2)
+            Q_range = np.linspace(xlim[0], xlim[1], 2)
+            I_mesh, Q_mesh = np.meshgrid(I_range, Q_range)
+            
+            # Contadores para agrupar en leyenda
+            edfa_count = 0
+            fiber_change_count = 0
+            
+            for i, blk in enumerate(chain):
+                btype = blk.get("type")
+                par = blk.get("par", {})
+                
+                if btype == "fiber":
+                    L_km = par.get("L", 0) / 1000.0
+                    
+                    # Detectar cambio de fibra (comparar parámetros con bloque anterior)
+                    is_fiber_change = False
+                    if prev_fiber_params is not None:
+                        # Comparar beta2, gamma, alpha para detectar cambio de tipo de fibra
+                        current_params = (par.get("beta2"), par.get("gamma"), par.get("alpha"))
+                        if current_params != prev_fiber_params:
+                            is_fiber_change = True
+                    
+                    # Marcar cambio de fibra con plano cyan claro
+                    if is_fiber_change and zmin <= z_accum_km <= zmax:
+                        Z_mesh = np.full_like(I_mesh, z_accum_km)
+                        fiber_change_count += 1
+                        
+                        # Detectar tipo de fibra por dispersión
+                        D = par.get("D", par.get("beta2", 0) * -1e27 / (1550e-9)**2)  # Aproximación
+                        fiber_type = "DCF" if D < 0 else "SMF"
+                        
+                        fig.add_trace(go.Surface(
+                            x=Z_mesh,
+                            y=I_mesh,
+                            z=Q_mesh,
+                            opacity=0.25,
+                            colorscale=[[0, 'rgba(150, 220, 255, 0.25)'], [1, 'rgba(150, 220, 255, 0.25)']],
+                            showscale=False,
+                            hoverinfo='skip',
+                            name=f"→ {fiber_type} ({z_accum_km:.1f}km)",
+                            showlegend=True,
+                            legendgroup="fiber_changes",
+                            legendgrouptitle_text="Cambios de Fibra" if fiber_change_count == 1 else None,
+                        ))
+                    
+                    prev_fiber_params = (par.get("beta2"), par.get("gamma"), par.get("alpha"))
+                    z_accum_km += L_km
+                    
+                elif btype == "edfa":
+                    # Marcar EDFA con plano amarillo-verde claro
+                    if zmin <= z_accum_km <= zmax:
+                        Z_mesh = np.full_like(I_mesh, z_accum_km)
+                        G_dB = par.get("G_dB", 0)
+                        edfa_count += 1
+                        
+                        fig.add_trace(go.Surface(
+                            x=Z_mesh,
+                            y=I_mesh,
+                            z=Q_mesh,
+                            opacity=0.25,
+                            colorscale=[[0, 'rgba(200, 255, 150, 0.25)'], [1, 'rgba(200, 255, 150, 0.25)']],
+                            showscale=False,
+                            hoverinfo='skip',
+                            name=f"EDFA +{G_dB:.1f}dB ({z_accum_km:.1f}km)",
+                            showlegend=True,
+                            legendgroup="edfas",
+                            legendgrouptitle_text="Amplificadores" if edfa_count == 1 else None,
+                        ))
+        
     else:
         # MODO NUBE TRADICIONAL
         X = np.concatenate([s.real for s, _ in slices])
@@ -594,8 +673,6 @@ def save_constellations_3d_html(consSym, consZ_m, outpath: Path,
         ylim = lim_rob(all_symbols.imag)  # Límites para Q
         z_positions = np.array([z_km for _, z_km in slices])
         zmin, zmax = float(np.min(z_positions)), float(np.max(z_positions))
-    
-    title_text = "Evolución 3D de constelaciones a lo largo del enlace"
 
     # CAMBIO: Ejes reordenados - X es distancia (horizontal), Y es I, Z es Q (vertical)
     fig.update_layout(
@@ -610,15 +687,8 @@ def save_constellations_3d_html(consSym, consZ_m, outpath: Path,
             aspectmode="manual",
             aspectratio=dict(x=5, y=1, z=1),  # Mucho más ancho en X (distancia)
         ),
-        margin=dict(l=0, r=0, t=80, b=0),
+        margin=dict(l=0, r=0, t=0, b=0),
         height=760,
-        title=dict(
-            text=title_text,
-            y=0.98,  # Posición vertical del título (cerca del borde superior)
-            x=0.5,   # Centrado horizontalmente
-            xanchor='center',
-            yanchor='top'
-        ),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0),
         uirevision=True,  # mantiene zoom/rotación al mover el slider
     )

@@ -417,7 +417,8 @@ def _execute(
                 plots_p / "constelaciones_3d.html",
                 every=const3d_every_calculated, pts_per_slice=const3d_html_pts, marker_size=2.0,
                 trace_symbols=trace_symbols, num_traces=num_traces,
-                group_by_quadrant=group_by_quadrant, show_slice_planes=show_slice_planes
+                group_by_quadrant=group_by_quadrant, show_slice_planes=show_slice_planes,
+                chain=chain
             )
 
     if do_eye:
