@@ -27,6 +27,9 @@ def run_chain(
     roll = getfield_def(parGlob, "roll", 0.1)
     span = getfield_def(parGlob, "span", 10)
     rxF = get_rx_filter(sps, roll, span)
+    
+    # Group delay del filtro RX (muestras)
+    rx_filter_delay = (span * sps) // 2
 
     zCum = 0.0
     consZ: List[float] = []
@@ -41,7 +44,8 @@ def run_chain(
     # --- Imagen INICIAL EN Z = 0 KM ---
     if do_const:
         B0 = rxF(A)
-        delay0 = 2 * info["pulseDelay"]
+        # Delay total = TX delay + RX delay
+        delay0 = info["pulseDelay"] + rx_filter_delay
         sym0 = B0[delay0::sps]
         consSym.append(sym0)
         consZ.append(0.0)
@@ -74,7 +78,8 @@ def run_chain(
 
                 if do_const:
                     B = rxF(A)
-                    delay = 2 * info["pulseDelay"]
+                    # Delay total = TX delay + RX delay
+                    delay = info["pulseDelay"] + rx_filter_delay
                     sym = B[delay::sps]
                     consSym.append(sym)
                     consZ.append(zCum)
@@ -82,7 +87,9 @@ def run_chain(
                     P_sig = float(xp.mean(xp.abs(A) ** 2))
                     powW.append(P_sig)
                     
-                    # Calcular OSNR
+                    # Calcular OSNR óptico (solo ASE, no incluye AWGN TX)
+                    # El AWGN TX es un ruido eléctrico que viaja con la señal
+                    # y se amplifica/atenúa junto con ella, no es ruido óptico
                     P_ase = info.get("P_ASE_total", 0.0)
                     if P_ase > 1e-30:
                         osnr_lin = P_sig / P_ase
@@ -98,7 +105,8 @@ def run_chain(
             A, info = edfa_block(A, info, par)
             if do_const:
                 B = rxF(A)
-                delay = 2 * info["pulseDelay"]
+                # Delay total = TX delay + RX delay
+                delay = info["pulseDelay"] + rx_filter_delay
                 sym = B[delay::sps]
                 consSym.append(sym)
                 consZ.append(zCum)
@@ -106,7 +114,9 @@ def run_chain(
                 P_sig = float(xp.mean(xp.abs(A) ** 2))
                 powW.append(P_sig)
                 
-                # Calcular OSNR
+                # Calcular OSNR óptico (solo ASE, no incluye AWGN TX)
+                # El AWGN TX es un ruido eléctrico que viaja con la señal
+                # y se amplifica/atenúa junto con ella, no es ruido óptico
                 P_ase = info.get("P_ASE_total", 0.0)
                 if P_ase > 1e-30:
                     osnr_lin = P_sig / P_ase
@@ -120,13 +130,19 @@ def run_chain(
     Arx = rxF(A)
     info["Lcum"] = zCum
 
+    # Calcular delay total correctamente: TX filter delay + RX filter delay
+    # Cada filtro RRC tiene group delay = span * sps / 2
+    # info["pulseDelay"] = span_TX * sps / 2 (guardado del TX)
+    # rx_filter_delay = span_RX * sps / 2 (calculado arriba)
+    delay_total_samp = info["pulseDelay"] + rx_filter_delay
+
     diag = {
         "consZ_m": consZ,
         "consSym": consSym,
         "powZ_m": powZ,
         "powW_W": powW,
         "osnrZ_dB": osnrZ,
-        "delay_samp": 2 * info["pulseDelay"],
+        "delay_samp": delay_total_samp,
         "sps": sps,
     }
     return Arx, info, diag

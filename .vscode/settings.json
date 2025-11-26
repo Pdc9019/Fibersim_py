@@ -112,5 +112,9 @@
   
   // Archivo principal del proyecto
   "latex-workshop.latex.rootFile.indicator": "% !TEX root",
-  "latex-workshop.latex.rootFile.useSubFile": false
+  "latex-workshop.latex.rootFile.useSubFile": false,
+  "codesnap.transparentBackground": true,
+  "codesnap.containerPadding": "0.5em",
+  "codesnap.showLineNumbers": false,
+  "codesnap.showWindowControls": false
 }

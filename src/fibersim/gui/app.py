@@ -14,7 +14,7 @@ from fibersim.main import _execute
 # ------------------------- Page Configuration -------------------------
 st.set_page_config(
     page_title="FiberSim - Simulador de Enlaces de Fibra Óptica",
-    page_icon="🔬",
+    page_icon="🖥️",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -201,7 +201,7 @@ if "last_backend" not in st.session_state:
 # ------------------------- carga / guardado y presets -------------------------
 
 # Título principal del sidebar
-st.sidebar.title("⚙️ Gestión de Configuración")
+st.sidebar.title("Gestión de Configuración")
 st.sidebar.markdown("---")
 
 # Sección 1: Cargar configuración personalizada (expuesta directamente)
@@ -215,9 +215,9 @@ if upl:
         st.session_state.chain     = [b.model_dump() for b in cfg.chain]
         for b in st.session_state.chain: ensure_uid(b)
         st.session_state.edit_idx = None
-        st.sidebar.success("✅ Configuración cargada")
+        st.sidebar.success("Configuración cargada")
     except Exception as e:
-        st.sidebar.error(f"❌ Error al cargar: {e}")
+        st.sidebar.error(f"Error al cargar: {e}")
 
 st.sidebar.markdown("")
 
@@ -275,7 +275,7 @@ if files_map:
     )
     
     # Botón para cargar
-    if st.sidebar.button("🚀 Cargar Ejemplo", use_container_width=True, type="primary"):
+    if st.sidebar.button("Cargar Ejemplo", use_container_width=True, type="primary"):
         try:
             raw = files_map[file_sel]
             cfg = SimConfig.model_validate(raw)
@@ -284,11 +284,11 @@ if files_map:
             st.session_state.chain     = [b.model_dump() for b in cfg.chain]
             for b in st.session_state.chain: ensure_uid(b)
             st.session_state.edit_idx = None
-            st.sidebar.success(f"✅ '{file_sel}' cargado exitosamente")
+            st.sidebar.success(f"'{file_sel}' cargado exitosamente")
         except Exception as e:
-            st.sidebar.error(f"❌ Error al cargar: {e}")
+            st.sidebar.error(f"Error al cargar: {e}")
 else:
-    st.sidebar.info("ℹ️ No se encontraron archivos de ejemplo en `examples/configs/`")
+    st.sidebar.info("No se encontraron archivos de ejemplo en `examples/configs/`")
 
 # ------------------------- parámetros simples y robustos -------------------------
 
@@ -354,6 +354,10 @@ with gcol:
     
     M_sel = mod_map_value[M_display_sel]
     
+    # Warning para 16QAM
+    if M_sel == 16:
+        st.warning("⚠️ **16QAM**: Funcionalidad experimental. DSP coherente en desarrollo - puede dar BER alto (~50%). Recomendado usar QPSK para resultados confiables.")
+    
     # Receptor (solo si BPSK)
     if M_sel == 2:
         rx_sel = st.selectbox(
@@ -396,6 +400,49 @@ with gcol:
     g["Ptx"] = float(dbm_to_w(Ptx_dBm))
 
     st.caption(f"Tasa de Muestreo: {g['Fs']/1e9:.3f} GS/s (Rb={g['Rb']/1e9:.3f} Gbps × sps={g['sps']})  |  Potencia TX: {Ptx_dBm:.2f} dBm ({g['Ptx']*1000:.3f} mW)")
+
+    # ========== Ruido AWGN ==========
+    st.markdown("##### Ruido del Sistema")
+    
+    enable_awgn = st.checkbox(
+        "Activar Ruido AWGN",
+        value=g.get("enable_awgn", False),
+        help="""Añade ruido gaussiano blanco aditivo (AWGN) tanto en transmisor como en receptor.
+        
+Simula:
+- Transmisor: Ruido del láser, jitter del modulador, imperfecciones electrónicas
+- Receptor: Shot noise del fotodetector, ruido térmico del TIA, ruido del ADC
+
+El ruido del transmisor se propaga a través del sistema óptico (fibra y EDFAs).
+El ruido del receptor se suma al final de la cadena.
+
+Impacto: Afecta constelaciones, BER, EVM y es visible en waveforms."""
+    )
+    
+    if enable_awgn:
+        awgn_intensity_db = st.slider(
+            "Intensidad de Ruido (SNR) [dB]",
+            min_value=8.0,
+            max_value=40.0,
+            value=float(g.get("awgn_intensity_db", 25.0)),
+            step=1.0,
+            help="""Controla la intensidad del ruido añadido al sistema (menor SNR = más ruido).
+
+Valores de referencia:
+- 30-40 dB: Sistema de alta calidad (ruido bajo, apenas visible)
+- 22-30 dB: Sistema típico comercial (ruido moderado)
+- 15-22 dB: Sistema con ruido elevado (degradación visible)
+- 10-15 dB: Límite de operación (BER en el umbral)
+- Menor a 10 dB: Ruido extremo (sistema degradado severamente)
+
+NOTA: El ruido interactúa con las mediciones de OSNR del sistema.
+Menor SNR producirá mayor BER y constelaciones más dispersas."""
+        )
+    else:
+        awgn_intensity_db = 25.0
+    
+    g["enable_awgn"] = enable_awgn
+    g["awgn_intensity_db"] = awgn_intensity_db
 
 def _generate_rrc_pulse(beta: float, span: int, sps: int = 8) -> tuple:
     """Genera pulso RRC para visualización en tiempo real"""
@@ -652,7 +699,7 @@ with colB:
         )
         # Advertencia solo si dz <= 10
         if dz_override <= 10.0:
-            st.warning("⚠️ ADVERTENCIA: dz bajo (≤10 m) puede tardar horas en enlaces largos")
+            st.warning("ADVERTENCIA: dz bajo (≤10 m) puede tardar horas en enlaces largos")
     else:
         dz_override = None
 
@@ -1045,15 +1092,31 @@ ber = res.get("BER_est_BPSK", None)
 if ber is None:
     ber = res.get("BER_post", None)
 osnr = res.get("OSNR_final_dB", None)
+snr_eff = res.get("SNR_eff_dB", None)
 
 # Mostrar solo métricas ópticas relevantes
 if ber is not None:
     chips.append(f"<span class='meta-chip'>BER: {float(ber)*100:.4f}%</span>")
 
 if osnr is not None:
-    chips.append(f"<span class='meta-chip'>OSNR final: {osnr:.2f} dB</span>")
+    chips.append(f"<span class='meta-chip'>OSNR (ASE): {osnr:.2f} dB</span>")
+
+if snr_eff is not None:
+    chips.append(f"<span class='meta-chip'>SNR efectivo (ASE+AWGN, pre-MF): {snr_eff:.2f} dB</span>")
     
-    # Calcular BER teórico desde OSNR para referencia
+    # Calcular BER teórico desde SNR efectivo para referencia (pre matched filter)
+    try:
+        from math import erfc, sqrt
+        Bo_Hz = 12.5e9  # Ancho de banda óptico de referencia
+        Rb = res.get("global", {}).get("Rb", 32e9)
+        SNR_eff_lin = 10.0**(snr_eff/10.0)
+        SNR_theoretical_lin = SNR_eff_lin * (Bo_Hz / Rb)
+        ber_teorico = 0.5 * erfc(sqrt(max(SNR_theoretical_lin, 1e-12))/sqrt(2.0))
+        chips.append(f"<span class='meta-chip'>BER teórico (pre-MF, desde SNR): {ber_teorico*100:.4f}%</span>")
+    except Exception:
+        pass
+elif osnr is not None:
+    # Si no hay SNR efectivo, calcular desde OSNR (sin AWGN)
     try:
         from math import erfc, sqrt
         Bo_Hz = 12.5e9  # Ancho de banda óptico de referencia
@@ -1092,13 +1155,15 @@ with st.expander("Resumen de la última ejecución", expanded=True):
             help="Tiempo total de ejecución de la simulación en segundos. Incluye propagación SSFM, procesamiento DSP y generación de gráficos."
         )
 
-        # Solo OSNR (métrica óptica relevante)
+        # OSNR (solo ruido óptico ASE) y SNR efectivo (ASE + AWGN)
         osnr = res.get("OSNR_final_dB", None)
+        snr_eff = res.get("SNR_eff_dB", None)
+        
         if osnr is not None:
             cols[2].metric(
-                "OSNR final [dB]", 
+                "OSNR (ASE) [dB]", 
                 f"{osnr:.2f}",
-                help="Optical Signal-to-Noise Ratio al final del enlace. Relación entre potencia de señal y ruido ASE de los amplificadores, medida en ancho de banda de señal. Valores típicos: >20 dB excelente, 15-20 dB bueno, <15 dB degradado. Determina el límite de rendimiento por ruido óptico."
+                help="Optical Signal-to-Noise Ratio al final del enlace. Mide solo el ruido ASE de los EDFAs (ruido óptico). Valores típicos: >20 dB excelente, 15-20 dB bueno, <15 dB degradado. No incluye ruido eléctrico (AWGN)."
             )
         else:
             cols[2].metric(
@@ -1121,23 +1186,25 @@ with st.expander("Resumen de la última ejecución", expanded=True):
             help="Bit Error Rate estimado asumiendo modulación BPSK y detección directa (IMDD). Fracción de bits recibidos incorrectamente. Valores típicos: <1e-9 excelente (error-free), 1e-3 a 1e-9 aceptable con FEC, >1e-3 inutilizable. Solo válido para enlaces IMDD, no para coherente."
         )
         
-        # Coherent extras if present
+        # Coherent extras if present: place all metrics in the same row to avoid empty gaps
         evm_post = res.get("EVM_post_dB", None)
         Q_post = res.get("Q_post", None)
         ber_post = res.get("BER_post", None)
-        
+
         cols[5].metric(
-            "EVM post [dB]", 
+            "EVM post [dB]",
             f"{evm_post:.2f}" if evm_post is not None else "-",
             help="Error Vector Magnitude después del receptor coherente en dB. Mide la desviación RMS entre símbolos recibidos e ideales, normalizada por potencia de señal. Valores típicos: <-25 dB excelente, -20 a -25 dB bueno, -15 a -20 dB aceptable, >-15 dB degradado. A menor valor (más negativo), mejor calidad. Solo para receptor coherente (QPSK/16-QAM)."
         )
+
         cols[6].metric(
-            "Q post", 
+            "Q post",
             f"{Q_post:.2f}" if Q_post is not None else "-",
             help="Factor de calidad Q en escala lineal después del receptor coherente. Relación señal-ruido en el espacio de símbolos. Q = distancia entre símbolos / desviación estándar del ruido. Valores típicos: Q>6 excelente (BER<1e-9), Q=4-6 bueno, Q<4 degradado. Se relaciona con BER mediante función Q inversa. Solo para receptor coherente."
         )
+
         cols[7].metric(
-            "BER post", 
+            "BER post",
             f"{ber_post:.3e}" if ber_post is not None else "-",
             help="Bit Error Rate medido después del receptor coherente. Fracción real de bits decodificados incorrectamente considerando la modulación utilizada (BPSK/QPSK/16-QAM). Valores típicos: <1e-12 excelente, 1e-9 a 1e-12 muy bueno, 1e-6 a 1e-9 bueno (con FEC), 1e-3 a 1e-6 límite FEC, >1e-3 inutilizable. Métrica definitiva de calidad del enlace."
         )
@@ -1174,16 +1241,17 @@ if waveform_plot.exists():
     st.markdown("### Waveforms TX vs RX")
     st.image(str(waveform_plot), caption="Comparación de señales: Transmitida (TX) vs Recibida (RX)", use_container_width=True)
     
-    # Botón de descarga en formato CSV (completo)
+    # Botones de descarga por separado: TX, RX, RX post-MF
     if waveform_h5.exists():
         try:
             import h5py
             import io
+            import datetime
             
-            # Convertir HDF5 a CSV
-            csv_buffer = io.StringIO()
-            csv_buffer.write("# Waveforms TX/RX - FiberSim\n")
-            csv_buffer.write("# Columnas: sample_idx, tx_real, tx_imag, rx_real, rx_imag\n")
+            # Generar timestamp para nombres únicos
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            mod_name = res.get("global", {}).get("mod", "BPSK")
+            Rb_Gbps = res.get("global", {}).get("Rb", 32e9) / 1e9
             
             with h5py.File(waveform_h5, 'r') as f:
                 tx_real = f['tx/real'][:]
@@ -1191,30 +1259,84 @@ if waveform_plot.exists():
                 rx_real = f['rx/real'][:]
                 rx_imag = f['rx/imag'][:]
                 
-                # Escribir metadata como comentarios
-                csv_buffer.write(f"# Fs = {f.attrs.get('Fs', 'N/A')} Hz\n")
-                csv_buffer.write(f"# sps = {f.attrs.get('sps', 'N/A')}\n")
-                csv_buffer.write(f"# Modulacion = {f.attrs.get('mod', 'N/A')}\n")
-                csv_buffer.write("#\n")
+                # Metadata común
+                Fs = f.attrs.get('Fs', 'N/A')
+                sps = f.attrs.get('sps', 'N/A')
+                mod = f.attrs.get('mod', 'N/A')
+                Ptx = f.attrs.get('Ptx', 'N/A')
                 
-                # Escribir datos
-                for i in range(len(tx_real)):
-                    rx_r = rx_real[i] if i < len(rx_real) else 0.0
-                    rx_i = rx_imag[i] if i < len(rx_imag) else 0.0
-                    csv_buffer.write(f"{i},{tx_real[i]:.6e},{tx_imag[i]:.6e},{rx_r:.6e},{rx_i:.6e}\n")
+                # Función helper para generar CSV
+                def make_csv(data_real, data_imag, title):
+                    buffer = io.StringIO()
+                    buffer.write(f"# {title} - FiberSim\n")
+                    buffer.write(f"# Timestamp: {timestamp}\n")
+                    buffer.write(f"# Fs = {Fs} Hz\n")
+                    buffer.write(f"# sps = {sps}\n")
+                    buffer.write(f"# Modulacion = {mod}\n")
+                    if Ptx != 'N/A':
+                        buffer.write(f"# Ptx = {Ptx} W\n")
+                    buffer.write("# Columnas: sample_idx, real, imag, magnitude\n")
+                    buffer.write("#\n")
+                    
+                    for i in range(len(data_real)):
+                        r = data_real[i]
+                        im = data_imag[i]
+                        mag = (r**2 + im**2)**0.5
+                        buffer.write(f"{i},{r:.6e},{im:.6e},{mag:.6e}\n")
+                    
+                    return buffer.getvalue()
+                
+                # CSV para TX
+                csv_tx = make_csv(tx_real, tx_imag, "Waveform TX (Transmitido)")
+                
+                # CSV para RX
+                csv_rx = make_csv(rx_real, rx_imag, "Waveform RX (Recibido pre-DSP)")
+                
+                # CSV para RX post-MF (si existe)
+                csv_rx_post = None
+                if 'rx_post_mf/real' in f and 'rx_post_mf/imag' in f:
+                    rx_post_real = f['rx_post_mf/real'][:]
+                    rx_post_imag = f['rx_post_mf/imag'][:]
+                    csv_rx_post = make_csv(rx_post_real, rx_post_imag, "Waveform RX (Post Matched Filter)")
             
-            csv_data = csv_buffer.getvalue()
+            # Botones de descarga en 3 columnas
+            col_tx, col_rx, col_rx_post = st.columns(3)
             
-            st.download_button(
-                label="Descargar Waveforms Completos (CSV)",
-                data=csv_data,
-                file_name="waveforms_complete.csv",
-                mime="text/csv",
-                help="Archivo CSV con todas las muestras TX/RX. Compatible con Excel, MATLAB, Python, etc.",
-                use_container_width=True
-            )
+            with col_tx:
+                st.download_button(
+                    label="Descargar TX",
+                    data=csv_tx,
+                    file_name=f"waveform_TX_{mod_name}_{Rb_Gbps:.0f}Gbps_{timestamp}.csv",
+                    mime="text/csv",
+                    help="Señal transmitida (después de pulse shaping)",
+                    use_container_width=True
+                )
+            
+            with col_rx:
+                st.download_button(
+                    label="Descargar RX (pre-DSP)",
+                    data=csv_rx,
+                    file_name=f"waveform_RX_preDSP_{mod_name}_{Rb_Gbps:.0f}Gbps_{timestamp}.csv",
+                    mime="text/csv",
+                    help="Señal recibida después de propagación óptica (antes de matched filter)",
+                    use_container_width=True
+                )
+            
+            with col_rx_post:
+                if csv_rx_post:
+                    st.download_button(
+                        label="Descargar RX (post-MF)",
+                        data=csv_rx_post,
+                        file_name=f"waveform_RX_postMF_{mod_name}_{Rb_Gbps:.0f}Gbps_{timestamp}.csv",
+                        mime="text/csv",
+                        help="Señal recibida después de matched filter RRC",
+                        use_container_width=True
+                    )
+                else:
+                    st.caption("Post-MF no disponible")
+                    
         except Exception as e:
-            st.warning(f"No se pudo generar CSV: {e}")
+            st.warning(f"No se pudieron generar archivos de descarga: {e}")
 
 # Perfiles z: preferir medidos del último log; si no, estimado analítico
 st.divider()
@@ -1524,15 +1646,27 @@ try:
             # Mostrar OSNR óptico y efectivo
             osnr_display = f"{osnr_measured:.2f} dB"
             if osnr_effective is not None and osnr_effective > -10:
-                penalty_db = osnr_measured - osnr_effective
+                penalty_db = osnr_effective - osnr_measured
                 st.metric(
                     label="OSNR Óptico / Efectivo",
                     value=osnr_display,
-                    delta=f"Penalidad: {penalty_db:.1f} dB" if penalty_db > 0.5 else "Sin degradación",
-                    delta_color="inverse" if penalty_db > 3 else "normal",
-                    help=f"OSNR óptico: {osnr_measured:.2f} dB - Relación señal/ruido medida por ruido ASE de amplificadores (solo óptico).\n\n"
-                         f"OSNR efectivo: {osnr_effective:.2f} dB - OSNR equivalente calculado desde BER real, incluye TODAS las degradaciones (ASE + dispersión cromática + efectos no lineales + PMD + ruido de fase).\n\n"
-                         f"Penalidad del sistema: {penalty_db:.2f} dB - Diferencia entre OSNR óptico y efectivo. Representa cuánto se degrada el enlace por efectos que NO son ruido ASE. Valores típicos: <1 dB excelente (sistema limitado por ASE), 1-3 dB bueno, 3-6 dB aceptable (dispersión o no linealidades moderadas), >6 dB problemático (dispersión no compensada o SPM/XPM severos)."
+                    delta=f"Penalidad: {penalty_db:+.1f} dB" if abs(penalty_db) > 0.5 else "Limitado por ASE",
+                    delta_color="inverse" if penalty_db < -3 else "normal",
+                    help=f"OSNR óptico (ASE): {osnr_measured:.2f} dB - Calculado desde ruido ASE de amplificadores EDFA.\n\n"
+                         f"OSNR efectivo (desde BER): {osnr_effective:.2f} dB - Calculado invirtiendo la fórmula teórica BER según la modulación.\n\n"
+                         f"PENALIDAD DEL SISTEMA: {penalty_db:+.2f} dB\n"
+                         f"Penalidad = OSNR_efectivo - OSNR_óptico\n\n"
+                         f"Interpretación:\n"
+                         f"• Penalidad ≈ 0 dB: Sistema limitado puramente por ruido ASE (ideal)\n"
+                         f"• Penalidad negativa (-1 a -3 dB): Degradaciones moderadas por dispersión cromática, efectos no lineales o PMD\n"
+                         f"• Penalidad negativa (<-3 dB): Degradación severa del sistema\n"
+                         f"• Penalidad positiva (>+10 dB): OSNR efectivo artificialmente alto debido a LIMITACIÓN NUMÉRICA:\n"
+                         f"  - El BER medido está limitado por el número finito de símbolos simulados\n"
+                         f"  - Con {res.get('Nsymb', 'N/A')} símbolos, el BER mínimo resoluble es ~1/Nsymb\n"
+                         f"  - Si el sistema real tiene BER muy bajo (ej. 1e-12), solo podemos medir hasta ~1e-5\n"
+                         f"  - Esto hace que el OSNR efectivo calculado sea SUBESTIMADO (parece mejor de lo medible)\n"
+                         f"  - Para confirmar BERs muy bajos se requieren simulaciones con >1e9 símbolos (costoso computacionalmente)\n\n"
+                         f"En este caso: El sistema tiene excelente calidad, pero el BER real es menor que la resolución numérica disponible."
                 )
             else:
                 st.metric(

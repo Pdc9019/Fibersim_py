@@ -41,6 +41,10 @@ class GlobalPar(BaseModel):
     mod: Literal["BPSK", "QPSK", "16QAM"] = "BPSK"
     rx: Literal["imdd", "coh"] = "imdd"
     pol: Literal["sp", "dp"] = "sp"
+    
+    # Ruido AWGN (Additive White Gaussian Noise) - Unified control
+    enable_awgn: bool = False  # Activar ruido gaussiano en TX y RX
+    awgn_intensity_db: float = 25.0  # Intensidad del ruido (SNR base) [dB]
 
 class DspPar(BaseModel):
     """Parámetros de DSP en recepción coherente.

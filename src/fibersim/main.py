@@ -3,6 +3,7 @@ import os, json, time, pathlib, importlib, math
 from typing import Any, Dict
 import typer
 from rich import print as rprint
+import numpy as np
 
 app = typer.Typer(help="Simulador de fibra con RRC + SSFM + plots 2D y 3D.")
 
@@ -31,6 +32,7 @@ def _prepare_backend(use_gpu: bool):
         "fibersim.core.utils",
         "fibersim.core.fiber",
         "fibersim.core.modem",
+        "fibersim.core.awgn",
     ]
     mods = {}
     for name in mod_names:
@@ -46,6 +48,7 @@ def _prepare_backend(use_gpu: bool):
     save_constellations_3d = mods["fibersim.core.plot"].save_constellations_3d
     save_constellations_3d_html = mods["fibersim.core.plot"].save_constellations_3d_html
     modem = mods["fibersim.core.modem"]
+    awgn = mods["fibersim.core.awgn"]
     try:
         dsp = importlib.import_module("fibersim.core.dsp")
     except Exception:
@@ -76,8 +79,9 @@ def _prepare_backend(use_gpu: bool):
         save_power_evolution,
         save_constellations_3d,
         save_constellations_3d_html,
-    modem,
-    dsp,
+        modem,
+        dsp,
+        awgn,
     )
 
 def _to_numpy_if_needed(arr, xp):
@@ -156,6 +160,7 @@ def _execute(
         save_constellations_3d_html,
         modem,
         dsp,
+        awgn,
     ) = _prepare_backend(gpu)
 
     cfg = _load_config(config)
@@ -181,6 +186,19 @@ def _execute(
     txSig, info = pulse_shaper(syms, info, pulse_par)
     Ein = xp.sqrt(parGlob["Ptx"]) * txSig
 
+    # AWGN en TX (si está habilitado)
+    P_awgn_tx = 0.0
+    if parGlob.get("enable_awgn", False):
+        snr_base = parGlob.get("awgn_intensity_db", 25.0)
+        # TX: ruido ligeramente menor (mejor SNR) ya que es antes de propagación
+        snr_tx = snr_base + 5.0
+        print(f"[AWGN] Aplicando ruido TX: SNR={snr_tx:.1f} dB")
+        Ein, P_awgn_tx = awgn.add_awgn(Ein, snr_tx, xp, sps=1, rolloff=0.0, mode="sample")
+        info["P_AWGN_TX"] = P_awgn_tx
+    else:
+        print(f"[AWGN] DESACTIVADO")
+        info["P_AWGN_TX"] = 0.0
+
     # Cadena
     t0 = time.time()
     Aout, info, diag = run_chain(
@@ -197,6 +215,46 @@ def _execute(
         step_const_m=step_const_km * 1e3,
     )
     elapsed = time.time() - t0
+
+    # AWGN en RX (si está habilitado)
+    P_awgn_rx = 0.0
+    if parGlob.get("enable_awgn", False):
+        snr_base = parGlob.get("awgn_intensity_db", 25.0)
+        # RX: usar intensidad base (ruido térmico + shot noise del receptor)
+        print(f"[AWGN] Aplicando ruido RX: SNR={snr_base:.1f} dB")
+        Aout, P_awgn_rx = awgn.add_awgn(Aout, snr_base, xp, sps=1, rolloff=0.0, mode="sample")
+        info["P_AWGN_RX"] = P_awgn_rx
+        
+        # Capturar constelación POST-AWGN para visualización correcta del ruido RX
+        if do_const and "consSym" in diag and len(diag.get("consSym", [])) > 0:
+            # Crear RX filter (igual que en run_chain)
+            from .core.utils import get_tx_filter
+            h_np = get_tx_filter(sps=int(parGlob["sps"]), 
+                                roll=pulse_par.get("roll", 0.1), 
+                                span=int(pulse_par.get("span", 10)))
+            h = xp.asarray(h_np, dtype=xp.float64)
+            
+            # Aplicar RX filter (convolución)
+            den = xp.asarray([1.0], dtype=h.dtype)
+            if hasattr(xp, 'convolve'):
+                # NumPy o CuPy con convolve
+                Arx_post_awgn = xp.convolve(Aout, h, mode="same")
+            else:
+                # Fallback a lfilter
+                from cupyx.scipy import signal as xsignal
+                Arx_post_awgn = xsignal.lfilter(h, den, Aout)
+            
+            # Extraer símbolos con AWGN RX incluido
+            delay = 2 * info["pulseDelay"]
+            syms_post_awgn = Arx_post_awgn[delay::int(parGlob["sps"])]
+            
+            # Reemplazar el último punto de constelación con versión post-AWGN
+            diag["consSym"][-1] = syms_post_awgn
+            
+            print(f"[AWGN] Constelación final actualizada con ruido RX")
+    else:
+        print(f"[AWGN] (ruido solo de ASE de EDFAs)")
+        info["P_AWGN_RX"] = 0.0
 
     # Rutas de salida
     outdir_p = pathlib.Path(outdir); outdir_p.mkdir(parents=True, exist_ok=True)
@@ -243,16 +301,21 @@ def _execute(
         # Sample to symbols deterministically around measured delay
         s_hat = modem.slice_to_symbols(Aout_np, sps=sps, delay_samp=delay_guess, Nsym=Nsym)
         delay_total = int(delay_guess)
-        # For coherent receivers: normalize constellation
-        s_hat = modem.normalize_constellation(s_hat, None)
+        
         # tx reference already has unit power; ensure same truncation length
         tx_ref = syms_np[: len(s_hat)]
-        # For QPSK/16QAM: apply carrier phase alignment
+        
+        # For QPSK/16QAM: apply carrier phase alignment BEFORE normalization
         # BPSK NO necesita carrier_phase_align porque ber_from_symbols
         # ya hace su propia alineación considerando la ambigüedad de π
         if M_tx > 2:  # Solo para QPSK (4) y 16QAM (16)
             s_hat = modem.carrier_phase_align(s_hat, tx_ref)
-        # Metrics
+        
+        # IMPORTANTE: NO normalizar antes de calcular métricas
+        # La normalización cancela el efecto del ruido en BER/EVM
+        # Solo se debe usar para visualización de constelaciones
+        
+        # Metrics (calculadas con símbolos SIN normalizar)
         BER_est = modem.ber_from_symbols(syms_np[: len(s_hat)], s_hat, M=M_tx)
         try:
             EVM_dB = modem.evm_rms_db(syms_np[: len(s_hat)], s_hat)
@@ -289,12 +352,40 @@ def _execute(
                     except Exception:
                         osnr_i = None
                 profile.append({"z_km": z_km, "P_dBm": p_dbm, "OSNR_dB": osnr_i})
-            # último OSNR válido
+            # último OSNR válido de la cadena
             if osnrZ:
                 for v in reversed(osnrZ):
                     if v is not None:
                         osnr_final_db = float(v)
                         break
+            
+            # OSNR mide solo el ruido óptico (ASE)
+            # El AWGN TX viaja con la señal y no afecta al OSNR
+            # El AWGN RX se añade después y degrada el SNR total pero no el OSNR
+            # 
+            # Para obtener SNR efectivo total en RX (incluyendo todos los ruidos):
+            # 1/SNR_total = 1/OSNR + 1/SNR_AWGN_TX + 1/SNR_AWGN_RX
+            # 
+            # Pero esto es complicado porque AWGN TX ya está "quemado" en la señal
+            # y se ha propagado. Por ahora reportamos solo OSNR óptico.
+            # 
+            # Para diagnóstico, calculamos SNR efectivo considerando AWGN RX:
+            snr_eff_db = None
+            if osnr_final_db is not None:
+                P_awgn_rx = info.get("P_AWGN_RX", 0.0)
+                P_sig_final = powW[-1] if powW else 1.0
+                
+                if P_awgn_rx > 1e-30:
+                    # OSNR en lineal
+                    osnr_lin = 10.0 ** (osnr_final_db / 10.0)
+                    # SNR del AWGN RX
+                    snr_awgn_rx_lin = P_sig_final / P_awgn_rx
+                    # SNR efectivo total: 1/SNR_eff = 1/OSNR + 1/SNR_AWGN_RX
+                    snr_eff_lin = 1.0 / (1.0/osnr_lin + 1.0/snr_awgn_rx_lin)
+                    snr_eff_db = 10.0 * math.log10(max(snr_eff_lin, 1e-12))
+                else:
+                    # Sin AWGN RX, SNR efectivo = OSNR
+                    snr_eff_db = osnr_final_db
     except Exception:
         profile = None
 
@@ -321,6 +412,7 @@ def _execute(
         "Q_post": Q_post if M_tx > 2 else None,
         "SNR_sym_dB": snr_sym_db,
         "OSNR_final_dB": osnr_final_db,
+        "SNR_eff_dB": snr_eff_db,  # SNR efectivo total (OSNR + AWGN)
         "Pout_dBm": pout_dbm,
         "profile": profile,
     }
@@ -429,7 +521,7 @@ def _execute(
         try:
             from .core import waveform as wf_module
             
-            # Calcular segmento dinámico: mostrar exactamente 50 símbolos
+            # Calcular segmento dinámico para VISUALIZACIÓN: mostrar exactamente 50 símbolos
             # Esto se adapta automáticamente a cualquier tasa de símbolos
             symbols_to_show = 50
             Rb = parGlob['Rb']
@@ -437,8 +529,8 @@ def _execute(
             T_symbol = 1.0 / Rs  # Duración de un símbolo en segundos
             segment_duration_us = symbols_to_show * T_symbol * 1e6  # Convertir a microsegundos
             
-            # Calcular cantidad de muestras para el segmento
-            segment_length_samples = int(symbols_to_show * sps)
+            # Calcular cantidad de muestras para el segmento de visualización
+            segment_length_samples_plot = int(symbols_to_show * sps)
             
             # Guardar HDF5 con metadata
             wf_metadata = {
@@ -453,24 +545,59 @@ def _execute(
                 'backend': backend_info,
                 'symbols_displayed': symbols_to_show
             }
+            
+            # Aplicar matched filter RRC para obtener señal post-DSP
+            # Esto muestra el efecto del filtrado en la señal recibida
+            Aout_post_mf = None
+            try:
+                rolloff = float(pulse_par.get("rolloff", 0.5))
+                span_rrc = int(pulse_par.get("span", 8))
+                Aout_post_mf = dsp.rrc_matched_filter_np(Aout_np, sps, rolloff, span_rrc)
+            except Exception as e_mf:
+                rprint(f"[yellow]Advertencia: No se pudo aplicar matched filter para waveform: {e_mf}[/yellow]")
+            
+            # Guardar TODAS las muestras en HDF5 (no solo las de visualización)
             wf_module.save_waveforms_hdf5(
                 tx_signal=_to_numpy_if_needed(Ein, xp),
                 rx_signal=Aout_np,
+                rx_signal_post_mf=Aout_post_mf,
                 filepath=plots_p / "waveforms.h5",
                 metadata=wf_metadata,
                 segment_start=0,
-                segment_length=segment_length_samples
+                segment_length=None  # None = guardar todo
             )
             
-            # Crear gráfico comparativo con segmento dinámico
+            # Calcular SNR medido en cada etapa (para debugging)
+            def calc_snr_vs_clean(noisy, clean):
+                """Calcula SNR comparando señal ruidosa vs limpia"""
+                n = min(len(noisy), len(clean))
+                if n == 0:
+                    return None
+                sig_power = np.mean(np.abs(clean[:n])**2)
+                noise = noisy[:n] - clean[:n]
+                noise_power = np.mean(np.abs(noise)**2)
+                if noise_power <= 0:
+                    return None
+                return 10 * np.log10(sig_power / noise_power)
+            
+            # Señal TX limpia (sin AWGN)
+            Ein_clean = _to_numpy_if_needed(xp.sqrt(parGlob["Ptx"]) * txSig, xp)
+            Ein_actual = _to_numpy_if_needed(Ein, xp)
+            
+            snr_tx_measured = calc_snr_vs_clean(Ein_actual, Ein_clean)
+            if snr_tx_measured is not None:
+                print(f"[SNR Medido TX]: {snr_tx_measured:.2f} dB (objetivo: {parGlob.get('awgn_tx_snr_db', 'N/A')} dB)")
+            
+            # Crear gráfico comparativo con 3 paneles: TX, RX pre-DSP, RX post-MF
             wf_module.plot_waveform_comparison(
                 tx_signal=_to_numpy_if_needed(Ein, xp),
-                rx_signal=Aout_np,
+                rx_signal=Aout_np,  # Pre-DSP (después de propagación óptica)
                 sps=sps,
                 Fs=parGlob['Fs'],
-                segment_start_us=0.0,  # Siempre desde el inicio
+                segment_start_us=0.0,
                 segment_length_us=segment_duration_us,
-                filepath=plots_p / "waveform_comparison.png"
+                filepath=plots_p / "waveform_comparison.png",
+                rx_post_dsp=Aout_post_mf  # Post-DSP (después de matched filter)
             )
             rprint(f"[green]Waveforms guardados: {symbols_to_show} símbolos ({segment_duration_us:.2f} μs)[/green]")
         except Exception as e:

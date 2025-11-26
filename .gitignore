@@ -17,6 +17,7 @@ __pycache__/
 logs/
 plots/
 build/
+Latex/
 
 # Configuraciones temporales de la GUI
 tmp_gui_config.json
@@ -48,9 +49,37 @@ ANALISIS_SNR_BER_INCONSISTENCIA.md
 BACKEND_FIX_README.md
 CONSTELLATION_SAMPLING_ANALYSIS.md
 SOLUCION_SNR_BER_INCONSISTENCIA.md
+REVISION_FINAL.md
 
-# Latex (proyecto de tesis, separado del simulador)
-Latex/
+# Scripts temporales
+plot_waveform.py
+waveform_*.png
+
+# LaTeX build files
+Latex/MEMORIA/build/
+Latex/MEMORIA/*.aux
+Latex/MEMORIA/*.log
+Latex/MEMORIA/*.out
+Latex/MEMORIA/*.toc
+Latex/MEMORIA/*.lof
+Latex/MEMORIA/*.lot
+Latex/MEMORIA/*.bbl
+Latex/MEMORIA/*.blg
+Latex/MEMORIA/*.synctex.gz
+Latex/MEMORIA/*.fdb_latexmk
+Latex/MEMORIA/*.fls
+Latex/MEMORIA/*.acn
+Latex/MEMORIA/*.glo
+Latex/MEMORIA/*.ist
+Latex/MEMORIA/*.pdf
+Latex/PHP/build/
+Latex/PHP/*.aux
+Latex/PHP/*.log
+Latex/PHP/*.pdf
+
+# Downloaded waveform CSV files
+waveform_*.csv
 
 # JSON de configuración de ejemplos específicos (mantener solo examples/configs/)
 fibracompensada_ejemplo1.json
+myproject.toml
