@@ -86,28 +86,149 @@ Por qué así: slicing determinista evita dobles contajes de delay. La ruta cohe
 
 ```mermaid
 flowchart TD
-  A[GUI Inputs] --> B{Validacion schema}
-  B -- OK --> C[Construir config normalizada]
-  B -- Error --> B1[Mostrar error]
-  C --> D[Seleccionar backend CPU o GPU]
-  D --> E[PRBS M y Mapping Gray]
-  E --> F[Shaping RRC: upsample y filtro]
-  F --> G[Escalar por sqrt Ptx]
-  G --> H{Iterar cadena}
-  H -->|fiber| I[SSFM: Hhalf NL Hhalf atten]
-  I --> H
-  H -->|edfa| J[Ganancia y ASE]
-  J --> H
-  H -->|fin| K[RX filter RRC y snapshots]
-  K --> L{Receptor}
-  L -->|IMDD BPSK| M[Buscar retardo optimo y BER]
-  L -->|Coherente M mayor a 2| N[Slice delay_samp normalizar alinear fase]
-  N --> O[BER EVM Q SNR simbolo]
-  M --> P[Perfiles medidos y plots]
-  O --> P
-  P --> Q[Log JSON e imagenes HTML]
-  Q --> R[GUI resumen y perfiles]
+    Start([Inicio]) --> LoadConfig["Cargar configuración JSON"]
+    LoadConfig --> ValidateSchema{"Validación<br/>Pydantic"}
+  
+    ValidateSchema -->|"Error"| ShowError["Mostrar error<br/>y detener"]
+    ValidateSchema -->|"OK"| SelectBackend["Seleccionar backend<br/>CPU NumPy o GPU CuPy"]
+  
+    SelectBackend --> ReloadModules["Recargar módulos<br/>con backend seleccionado"]
+    ReloadModules --> ExtractParams["Extraer parámetros:<br/>parGlob, chain, pulse_par, dsp_par"]
+  
+    %% TRANSMISOR
+    ExtractParams --> TxStart["<b>TRANSMISOR</b>"]
+    TxStart --> PRBS["Generar bits PRBS<br/>según modulación M"]
+    PRBS --> MapGray["Mapeo Gray bits→símbolos<br/>BPSK/QPSK/16-QAM"]
+    MapGray --> Upsample["Upsample x sps<br/>insertar ceros"]
+    Upsample --> RRCFilter["Filtro conformador RRC<br/>lfilter con h TX"]
+    RRCFilter --> NormalizePower["Normalizar potencia<br/>P_media = 1"]
+    NormalizePower --> ScalePower["Escalar por √Ptx<br/>Ein = √Ptx × señal"]
+  
+    ScalePower --> CheckAWGN_TX{"AWGN TX<br/>habilitado?"}
+    CheckAWGN_TX -->|"Sí"| AddAWGN_TX["Añadir ruido AWGN TX<br/>SNR = base + 5 dB"]
+    CheckAWGN_TX -->|"No"| ChainStart
+    AddAWGN_TX --> ChainStart
+  
+    %% CADENA DE PROPAGACIÓN
+    ChainStart["<b>CADENA DE PROPAGACIÓN</b>"] --> InitChain["Inicializar:<br/>A = Ein, zCum = 0"]
+    InitChain --> InsertionLoss{"Pérdida de<br/>inserción?"}
+    InsertionLoss -->|"Sí"| ApplyInsertion["Atenuar A por<br/>insertion_dB"]
+    InsertionLoss -->|"No"| IterateChain
+    ApplyInsertion --> IterateChain
+  
+    IterateChain{"Más bloques<br/>en chain?"} -->|"Sí, tipo=fiber"| FiberBlock
+    IterateChain -->|"Sí, tipo=edfa"| EDFABlock
+    IterateChain -->|"No"| ChainEnd
+  
+    %% BLOQUE FIBRA
+    FiberBlock["<b>Bloque FIBER</b>"] --> CalcSteps["Calcular nSteps = ⌈L/dz⌉"]
+    CalcSteps --> PrecomputeKernels["Pre-computar kernels:<br/>Hhalf dispersión, att_step"]
+    PrecomputeKernels --> SSFMLoop{"Para cada paso<br/>SSFM"}
+  
+    SSFMLoop --> HalfLinear1["Medio paso lineal:<br/>FFT → ×Hhalf → IFFT"]
+    HalfLinear1 --> Nonlinear["Paso no lineal Kerr:<br/>A × exp(i×γ×|A|²×dz)"]
+    Nonlinear --> HalfLinear2["Medio paso lineal:<br/>FFT → ×Hhalf → IFFT"]
+    HalfLinear2 --> Attenuation["Atenuación:<br/>A × att_step"]
+  
+    Attenuation --> SSFMLoop
+    SSFMLoop -->|"Todos completados"| AttenuateASE["Atenuar P_ASE_total<br/>por e^-αL"]
+  
+    AttenuateASE --> CaptureConst1{"do_const y<br/>paso alcanzado?"}
+    CaptureConst1 -->|"Sí"| ApplyRxFilter1["Aplicar filtro RRC RX<br/>y submuestrear"]
+    CaptureConst1 -->|"No"| CheckSplice
+    ApplyRxFilter1 --> SaveSnapshot1["Guardar símbolos<br/>en consSym, consZ"]
+    SaveSnapshot1 --> CheckSplice
+  
+    CheckSplice{"Pérdida de<br/>splice?"} -->|"Sí y siguiente=fiber"| ApplySplice["Atenuar A por<br/>splice_dB"]
+    CheckSplice -->|"No"| IterateChain
+    ApplySplice --> IterateChain
+  
+    %% BLOQUE EDFA
+    EDFABlock["<b>Bloque EDFA</b>"] --> CalcGain["Calcular ganancia lineal<br/>G = 10^(G_dB/10)"]
+    CalcGain --> Amplify["Amplificar señal:<br/>A × √G"]
+    Amplify --> CalcASE["Calcular potencia ASE:<br/>Pase = nsp×h×ν×(G-1)×Rs/2"]
+    CalcASE --> GenNoise["Generar ruido gaussiano<br/>complejo"]
+    GenNoise --> AddASE["Sumar ASE a señal:<br/>A + noise"]
+    AddASE --> AccumASE["Acumular P_ASE_total:<br/>P_prev×G + Pase"]
+  
+    AccumASE --> CaptureConst2{"do_const?"}
+    CaptureConst2 -->|"Sí"| ApplyRxFilter2["Aplicar filtro RRC RX<br/>y submuestrear"]
+    CaptureConst2 -->|"No"| CalcOSNR
+    ApplyRxFilter2 --> SaveSnapshot2["Guardar símbolos"]
+    SaveSnapshot2 --> CalcOSNR["Calcular OSNR:<br/>10×log10(Psig/Pase)"]
+    CalcOSNR --> IterateChain
+  
+    %% FIN DE CADENA
+    ChainEnd["<b>FIN DE CADENA</b>"] --> CheckAWGN_RX{"AWGN RX<br/>habilitado?"}
+    CheckAWGN_RX -->|"Sí"| AddAWGN_RX["Añadir ruido AWGN RX<br/>SNR = base dB"]
+    CheckAWGN_RX -->|"No"| UpdateConstFinal
+    AddAWGN_RX --> UpdateConstFinal["Actualizar última<br/>constelación post-AWGN"]
+    UpdateConstFinal --> RxStart
+  
+    %% RECEPTOR
+    RxStart["<b>RECEPTOR</b>"] --> CheckRxMode{"Modo RX"}
+    CheckRxMode -->|"IMDD BPSK"| FindDelay["Buscar retardo óptimo<br/>±halfwin muestras"]
+    CheckRxMode -->|"Coherente M>2"| SliceSymbols["Submuestrear a símbolos<br/>en delay_samp"]
+  
+    FindDelay --> SliceBPSK["Submuestrear señal<br/>en delay óptimo"]
+    SliceBPSK --> CalcBER_BPSK["Calcular BER BPSK<br/>comparando bits"]
+  
+    SliceSymbols --> CheckPhase{"M > 2?"}
+    CheckPhase -->|"Sí QPSK/16QAM"| AlignPhase["Alineación de fase<br/>carrier_phase_align"]
+    CheckPhase -->|"No BPSK"| CalcMetrics
+    AlignPhase --> CalcMetrics["Calcular métricas:<br/>BER, EVM, Q-factor"]
+  
+    CalcBER_BPSK --> CalcOSNRFinal
+    CalcMetrics --> CalcOSNRFinal["Obtener OSNR final<br/>del último bloque"]
+  
+    CalcOSNRFinal --> CalcSNReff{"AWGN RX<br/>presente?"}
+    CalcSNReff -->|"Sí"| CombineSNR["Combinar SNR efectivo:<br/>1/SNR_eff = 1/OSNR + 1/SNR_AWGN"]
+    CalcSNReff -->|"No"| BuildResult
+    CombineSNR --> BuildResult
+  
+    %% RESULTADOS Y LOGGING
+    BuildResult["<b>RESULTADOS</b><br/>Construir diccionario result"] --> WriteLog["Escribir log JSON<br/>con config + métricas"]
+    WriteLog --> CheckPlots{"Generar<br/>gráficos?"}
+  
+    CheckPlots -->|"do_const"| NormalizeConst["Normalizar constelaciones<br/>para visualización"]
+    CheckPlots -->|"No"| End
+  
+    NormalizeConst --> FilterPlot2D["Diezmar según<br/>step_plot2d_km"]
+    FilterPlot2D --> Plot2D["Guardar grid 2D<br/>constelaciones.png"]
+    Plot2D --> PlotPower["Guardar evolución<br/>potencia.png"]
+    PlotPower --> Check3D{"do_const3d?"}
+  
+    Check3D -->|"Sí"| Plot3D_PNG["Guardar 3D matplotlib<br/>constelaciones_3d.png"]
+    Check3D -->|"No"| Check3D_HTML
+    Plot3D_PNG --> Check3D_HTML
+  
+    Check3D_HTML{"do_const3d_html?"} -->|"Sí"| AdaptiveStep["Calcular paso adaptativo<br/>~400 pts totales"]
+    Check3D_HTML -->|"No"| CheckEye
+    AdaptiveStep --> Plot3D_HTML["Guardar 3D interactivo<br/>constelaciones_3d.html"]
+    Plot3D_HTML --> CheckEye
+  
+    CheckEye{"do_eye?"} -->|"Sí"| PlotEye["Guardar eye diagram<br/>eye.png"]
+    CheckEye -->|"No"| PrintResults
+    PlotEye --> PrintResults
+  
+    PrintResults["Imprimir resumen:<br/>L, G, BER, OSNR, tiempo"] --> End([Fin])
+  
+    ShowError --> End
+  
+    %% ESTILOS
+    classDef txClass fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#fff
+    classDef chainClass fill:#e65100,stroke:#bf360c,stroke-width:2px,color:#fff
+    classDef rxClass fill:#2e7d32,stroke:#1b5e20,stroke-width:2px,color:#fff
+    classDef outputClass fill:#6a1b9a,stroke:#4a148c,stroke-width:2px,color:#fff
+    classDef decisionClass fill:#f57f17,stroke:#f9a825,stroke-width:2px,color:#000
+  
+    class TxStart,PRBS,MapGray,Upsample,RRCFilter,NormalizePower,ScalePower,AddAWGN_TX txClass
+    class ChainStart,InitChain,FiberBlock,EDFABlock,CalcSteps,PrecomputeKernels,SSFMLoop,HalfLinear1,Nonlinear,HalfLinear2,Attenuation,AttenuateASE,CalcGain,Amplify,CalcASE,GenNoise,AddASE,AccumASE chainClass
+    class RxStart,FindDelay,SliceBPSK,SliceSymbols,AlignPhase,CalcBER_BPSK,CalcMetrics,CalcOSNRFinal,CombineSNR rxClass
+    class BuildResult,WriteLog,NormalizeConst,FilterPlot2D,Plot2D,PlotPower,Plot3D_PNG,Plot3D_HTML,PlotEye,PrintResults outputClass
+    class ValidateSchema,CheckAWGN_TX,InsertionLoss,IterateChain,CaptureConst1,CheckSplice,CaptureConst2,CheckAWGN_RX,CheckRxMode,CheckPhase,CalcSNReff,CheckPlots,Check3D,Check3D_HTML,CheckEye decisionClass
 ```
+
 ---
 
 ## 8. Apéndice: rutas relevantes
@@ -128,10 +249,12 @@ flowchart TD
 - **Sistema Operativo**: Windows, Linux o macOS
 
 ### Dependencias principales:
+
 - numpy, scipy, matplotlib, plotly, streamlit
 - typer, rich, pydantic 2.x
 
 ### Opcional para GPU (aceleración CuPy):
+
 - CUDA Toolkit 12.9 (versión específica requerida)
 - Driver NVIDIA compatible
 - Tarjeta gráfica NVIDIA con soporte CUDA
@@ -143,6 +266,7 @@ flowchart TD
 ### Paso 1: Instalar Git (si no lo tienes)
 
 **Windows:**
+
 - Descarga desde: https://git-scm.com/download/win
 - Ejecuta el instalador y sigue las opciones por defecto
 - Verifica en una terminal PowerShell:
@@ -151,12 +275,14 @@ flowchart TD
   ```
 
 **Linux (Debian/Ubuntu):**
+
 ```bash
 sudo apt update
 sudo apt install git
 ```
 
 **macOS:**
+
 ```bash
 # Usando Homebrew
 brew install git
@@ -178,12 +304,14 @@ cd Fibersim_py
 ### Paso 3: Crear un Entorno Virtual
 
 **Windows (PowerShell):**
+
 ```powershell
 py -m venv .venv
 .venv\Scripts\Activate.ps1
 ```
 
 **Linux/macOS:**
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
@@ -198,14 +326,16 @@ source .venv/bin/activate
 **IMPORTANTE**: Este simulador requiere GPU NVIDIA con CUDA. Instala EXACTAMENTE en este orden:
 
 **4.1. Instalar CUDA Toolkit 12.9**
-   - Descarga CUDA 12.9 desde: https://developer.nvidia.com/cuda-12-9-0-download-archive
-   - Selecciona tu sistema operativo y sigue el instalador
-   - **CRÍTICO**: Debe ser versión 12.9, otras versiones pueden no ser compatibles
-   - Reinicia el sistema después de instalar
+
+- Descarga CUDA 12.9 desde: https://developer.nvidia.com/cuda-12-9-0-download-archive
+- Selecciona tu sistema operativo y sigue el instalador
+- **CRÍTICO**: Debe ser versión 12.9, otras versiones pueden no ser compatibles
+- Reinicia el sistema después de instalar
 
 **4.2. Instalar dependencias Python**:
 
 **Windows (PowerShell):**
+
 ```powershell
 py -m pip install --upgrade pip
 py -m pip install -r requirements.txt
@@ -213,6 +343,7 @@ py -m pip install cupy-cuda12x
 ```
 
 **Linux/macOS:**
+
 ```bash
 pip install --upgrade pip
 pip install -r requirements.txt
@@ -222,11 +353,13 @@ pip install cupy-cuda12x
 **4.3. Verificar instalación**:
 
 **Windows (PowerShell):**
+
 ```powershell
 py -c "import cupy as cp; print('CuPy version:', cp.__version__); print('CUDA available:', cp.cuda.is_available())"
 ```
 
 **Linux/macOS:**
+
 ```bash
 python3 -c "import cupy as cp; print('CuPy version:', cp.__version__); print('CUDA available:', cp.cuda.is_available())"
 ```
@@ -238,12 +371,14 @@ Si ves `CUDA available: True`, la instalación fue exitosa.
 ## Ejecución de la GUI
 
 **Windows (PowerShell):**
+
 ```powershell
 $env:PYTHONPATH = "src"
 streamlit run src/fibersim/gui/app.py
 ```
 
 **Linux/macOS:**
+
 ```bash
 export PYTHONPATH="src"
 streamlit run src/fibersim/gui/app.py
@@ -256,18 +391,22 @@ La GUI se abrirá automáticamente en tu navegador en `http://localhost:8501`
 ## Solución de Problemas Comunes
 
 **Error: "git no se reconoce como comando"**
+
 - Reinicia la terminal después de instalar Git
 - En Windows, verifica que Git esté en el PATH del sistema
 
 **Error: "python no se reconoce como comando"**
+
 - En Windows usa `py` en lugar de `python`
 - En Linux/macOS usa `python3`
 
 **Error al activar entorno virtual (Windows PowerShell)**
+
 - Ejecuta: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
 - Luego vuelve a intentar activar el entorno
 
 **CuPy no detecta la GPU**
+
 - Verifica que tengas CUDA Toolkit 12.9 instalado (no otra versión)
 - Asegúrate de tener el driver NVIDIA actualizado (versión 525.60.13 o superior)
 - Reinicia el sistema después de instalar CUDA
