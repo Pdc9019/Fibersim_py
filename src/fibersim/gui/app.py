@@ -354,10 +354,6 @@ with gcol:
     
     M_sel = mod_map_value[M_display_sel]
     
-    # Warning para 16QAM
-    if M_sel == 16:
-        st.warning("⚠️ **16QAM**: Funcionalidad experimental. DSP coherente en desarrollo - puede dar BER alto (~50%). Recomendado usar QPSK para resultados confiables.")
-    
     # Receptor (solo si BPSK)
     if M_sel == 2:
         rx_sel = st.selectbox(
@@ -443,6 +439,10 @@ Menor SNR producirá mayor BER y constelaciones más dispersas."""
     
     g["enable_awgn"] = enable_awgn
     g["awgn_intensity_db"] = awgn_intensity_db
+    
+    # Warning para 16QAM con AWGN activado
+    if M_sel == 16 and enable_awgn:
+        st.warning("⚠️ **16QAM + AWGN**: Funcionalidad experimental. DSP coherente en desarrollo - puede dar BER alto (~50%). Recomendado usar QPSK para resultados confiables.")
 
 def _generate_rrc_pulse(beta: float, span: int, sps: int = 8) -> tuple:
     """Genera pulso RRC para visualización en tiempo real"""
@@ -699,7 +699,7 @@ with colB:
         )
         # Advertencia solo si dz <= 10
         if dz_override <= 10.0:
-            st.warning("ADVERTENCIA: dz bajo (≤10 m) puede tardar horas en enlaces largos")
+            st.warning("ADVERTENCIA: dz bajo (≤10 m) puede tardar horas en enlaces largos si no se usa GPU.")
     else:
         dz_override = None
 
@@ -715,9 +715,9 @@ do_const = True
 do_eye = True
 do_waveform = True
 
-st.number_input("Graficar 2D cada [km]", value=5.0, min_value=0.5, step=0.5,
+st.number_input("Graficar 2D cada [km]", value=4.0, min_value=2.0, step=2.0,
                 key='step_plot2d_km',
-                help="Cada cuántos km graficar constelaciones 2D. Captura siempre cada 2 km.")
+                help="Cada cuántos km graficar constelaciones 2D con un mínimo de 2 km. Captura siempre cada 2 km, pero grafica según este valor.")
 
 st.markdown("##### Visualización 3D de Constelaciones")
 

@@ -24,12 +24,12 @@ def save_waveforms_hdf5(
     rx_signal_post_mf: np.ndarray | None = None
 ) -> None:
     """
-    Guarda waveforms TX y RX en formato HDF5 con metadata.
+    Guarda waveforms TX y RX en formato csv con metadata.
     
     Args:
         tx_signal: Señal transmitida (compleja)
         rx_signal: Señal recibida (compleja)
-        filepath: Ruta del archivo HDF5 a crear
+        filepath: Ruta del archivo csv a crear
         metadata: Diccionario con metadata (Fs, sps, Ptx, etc.)
         segment_start: Índice de inicio del segmento a guardar
         segment_length: Longitud del segmento (None = todo)
