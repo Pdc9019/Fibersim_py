@@ -48,9 +48,10 @@ def map_bits_to_symbols(bits, M: int, xp):
     if M == 16:
         def gray2level(b1, b0, xp):
             two = 2 * b1 + b0
+            # Gray mapping per axis: 00->+3, 01->+1, 10->-1, 11->-3
             lvl = xp.where(two == 0, 3.0,
-                  xp.where(two == 1, 1.0,
-                  xp.where(two == 3, -1.0, -3.0)))
+                xp.where(two == 1, 1.0,
+                xp.where(two == 2, -1.0, -3.0)))
             return lvl
         I = gray2level(b[:, 0], b[:, 1], xp).astype(xp.float64)
         Q = gray2level(b[:, 2], b[:, 3], xp).astype(xp.float64)
@@ -255,9 +256,10 @@ def _symbols_to_bits(s: np.ndarray, mod: str) -> np.ndarray:
         x = np.round(np.clip(s.real * scale, -3, 3)).astype(int)
         y = np.round(np.clip(s.imag * scale, -3, 3)).astype(int)
         def lev_to_bits(v):
-            # invert Gray per axis: +3->00, +1->01, -1->11, -3->10
-            msb = (v <= 0).astype(np.uint8)
-            lsb = (v == 1).astype(np.uint8) ^ msb
+            # invert Gray per axis: +3->00, +1->01, -1->10, -3->11
+            # msb = 1 for negative levels, lsb true for levels {+1, -3}
+            msb = (v < 0).astype(np.uint8)
+            lsb = ((v == 1) | (v == -1)).astype(np.uint8)
             return msb, lsb
         msb_i, lsb_i = lev_to_bits(x)
         msb_q, lsb_q = lev_to_bits(y)

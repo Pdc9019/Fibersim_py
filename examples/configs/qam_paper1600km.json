@@ -1,0 +1,69 @@
+{
+  "global": {
+    "Rb": 10.7e9,
+    "M": 4,
+    "sps": 16,
+    "Fs": 171.2e9,
+    "Nsym": 8192,
+    "Ptx": 0.001,
+    "mod": "QPSK",
+    "rx": "coh",
+    "pol": "dp"
+  },
+  "pulse": {
+    "type": "RRC",
+    "roll": 0.1,
+    "span": 10
+  },
+  "chain": [
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": -2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": 2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": -2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": 2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": -2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": 2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": -2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": 2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": -2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": 2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": -2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": 2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": -2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": 2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": -2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": 2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": -2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": 2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": -2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } },
+    { "type": "fiber", "par": { "L": 80000.0, "beta2": 2.17e-26, "gamma": 0.0013, "dz": 500.0, "alpha": 4.6e-5 } },
+    { "type": "edfa",  "par": { "G_dB": 16.0, "nsp": 2.0 } }
+  ]
+}

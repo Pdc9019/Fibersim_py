@@ -1468,9 +1468,9 @@ with col_dl2:
 
 # ------------------------- Gráfico BER vs OSNR -------------------------
 
-st.divider()
-st.markdown("### Rendimiento BER vs OSNR")
-st.caption("Tasa de error de bit teórica en función de la relación señal-ruido óptica")
+# st.divider()
+# st.markdown("### Rendimiento BER vs OSNR")
+# st.caption("Tasa de error de bit teórica en función de la relación señal-ruido óptica")
 
 try:
     from math import erfc, sqrt
@@ -1602,7 +1602,7 @@ try:
         font=dict(color='#2C3E50')
     )
     
-    st.plotly_chart(fig_ber_osnr, use_container_width=True, config={"displaylogo": False})
+  #  st.plotly_chart(fig_ber_osnr, use_container_width=True, config={"displaylogo": False})
     
     # Información sobre el punto medido
     if osnr_measured is not None and ber_measured is not None:
