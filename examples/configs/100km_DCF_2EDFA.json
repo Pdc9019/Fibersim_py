@@ -1,0 +1,54 @@
+{
+  "global": {
+    "Rb": 32e9,
+    "M": 4,
+    "sps": 16,
+    "Fs": 512e9,
+    "Nsym": 16384,
+    "Ptx": 0.001,
+    "mod": "QPSK",
+    "rx": "coh",
+    "pol": "dp"
+  },
+  "pulse": {
+    "type": "RRC",
+    "roll": 0.1,
+    "span": 10
+  },
+  "chain": [
+    {
+      "type": "fiber",
+      "par": {
+        "L": 90000.0,
+        "beta2": -2.17e-26,
+        "gamma": 0.00127,
+        "dz": 100.0,
+        "alpha": 4.6e-5
+      }
+    },
+    {
+      "type": "edfa",
+      "par": {
+        "G_dB": 18.0,
+        "nsp": 1.58
+      }
+    },
+    {
+      "type": "fiber",
+      "par": {
+        "L": 10000.0,
+        "beta2": 1.953e-25,
+        "gamma": 0.005,
+        "dz": 50.0,
+        "alpha": 1.15e-4
+      }
+    },
+    {
+      "type": "edfa",
+      "par": {
+        "G_dB": 5.0,
+        "nsp": 1.58
+      }
+    }
+  ]
+}
