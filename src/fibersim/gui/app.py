@@ -495,8 +495,8 @@ Ver: Agrawal - "Fiber Optic Communications" (2007)"""
     if enable_awgn:
         import matplotlib.pyplot as plt
         
-        # Usar columna pequeña para limitar el ancho
-        col1, col2, col3 = st.columns([1, 3, 1])
+        # Usar columna central más ancha para mejor visualización
+        col1, col2, col3 = st.columns([1, 1, 1])
         
         with col1:
             # Generar curva SNR(Ptx)
@@ -530,31 +530,31 @@ Ver: Agrawal - "Fiber Optic Communications" (2007)"""
                 snr_rx_curve.append(max(0.3, min(snr_max, snr_rx_db)))
             
             # Crear figura pequeña tipo badge
-            fig, ax = plt.subplots(figsize=(1.2, 1.2))
+            fig, ax = plt.subplots(figsize=(1.6, 1.6))
             fig.patch.set_facecolor('#0E1117')  # Fondo oscuro de Streamlit
             ax.set_facecolor('#0E1117')
             
             # Curva principal
-            ax.plot(ptx_range, snr_rx_curve, color='#4A9EFF', linewidth=1.5, alpha=0.9)
+            ax.plot(ptx_range, snr_rx_curve, color='#4A9EFF', linewidth=2.0, alpha=0.9)
             ax.fill_between(ptx_range, 0, snr_rx_curve, color='#4A9EFF', alpha=0.08)
             
             # Zona óptima muy sutil
             ax.axvspan(-3, 2, alpha=0.05, color='#00FF00')
             
             # Etiquetas con estilo minimalista
-            ax.set_xlabel('Ptx [dBm]', fontsize=6, color='#AAAAAA')
-            ax.set_ylabel('SNR [dB]', fontsize=6, color='#AAAAAA')
-            ax.grid(True, alpha=0.12, linestyle='-', linewidth=0.3, color='#444444')
+            ax.set_xlabel('Ptx [dBm]', fontsize=8, color='#AAAAAA')
+            ax.set_ylabel('SNR [dB]', fontsize=8, color='#AAAAAA')
+            ax.grid(True, alpha=0.12, linestyle='-', linewidth=0.4, color='#444444')
             ax.set_xlim(-20, 10)
             ax.set_ylim(0, 35)
             
             # Tick labels pequeños y discretos
-            ax.tick_params(labelsize=5, colors='#888888', length=1.5)
+            ax.tick_params(labelsize=7, colors='#888888', length=2.0)
             
             # Marcadores de zona en texto muy pequeño
-            ax.text(-15, 32, 'Tér', fontsize=5, color='#FF6B6B', alpha=0.5, ha='center')
-            ax.text(0, 32, 'Ópt', fontsize=5, color='#51CF66', alpha=0.5, ha='center')
-            ax.text(8, 32, 'Shot', fontsize=5, color='#FFA94D', alpha=0.5, ha='center')
+            ax.text(-15, 32, 'Tér', fontsize=7, color='#FF6B6B', alpha=0.5, ha='center')
+            ax.text(0, 32, 'Ópt', fontsize=7, color='#51CF66', alpha=0.5, ha='center')
+            ax.text(8, 32, 'Shot', fontsize=7, color='#FFA94D', alpha=0.5, ha='center')
             
             # Quitar bordes innecesarios
             ax.spines['top'].set_visible(False)

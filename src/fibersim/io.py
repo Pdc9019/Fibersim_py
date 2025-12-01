@@ -7,7 +7,8 @@ def write_simlog(path: Path, cfg: Dict[str, Any], result: Dict[str, Any], elapse
     obj = {
         "date": time.strftime("%d-%b-%Y %H:%M:%S"),
         "elapsed_s": elapsed_s,
-        **{k: v for k, v in cfg.items() if k != "chain"},
+        "session_id": cfg.get("session_id", "default"),
+        **{k: v for k, v in cfg.items() if k not in ["chain", "session_id"]},
         "chain": cfg.get("chain", []),
         "result": result,
     }

@@ -690,7 +690,7 @@ def _execute(
     ber_str = (f"{ber_print:.3e}" if isinstance(ber_print, (int, float)) and ber_print is not None else "n/a")
     
     # Mensaje completo con todas las métricas importantes
-    msg = f"L = {result['Lcum_m']/1e3:.1f} km | G = {result['G_dB']:.1f} dB | elapsed = {elapsed:.3f} s"
+    msg = f"[Session: {session_id}] L = {result['Lcum_m']/1e3:.1f} km | G = {result['G_dB']:.1f} dB | elapsed = {elapsed:.3f} s"
     msg += f" | BER={ber_str}"
     
     # Agregar SNR pre y post DSP si están disponibles
