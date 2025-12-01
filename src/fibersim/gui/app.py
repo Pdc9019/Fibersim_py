@@ -187,6 +187,15 @@ div[data-testid="stHorizontalBlock"] { gap:.25rem; }
 """, unsafe_allow_html=True)
 
 # Estado inicial
+# Generar session_id único para multiusuario
+if "session_id" not in st.session_state:
+    import uuid
+    st.session_state.session_id = str(uuid.uuid4())[:8]
+    # Log en consola cuando se crea nueva sesión
+    print(f"\n{'='*60}")
+    print(f"🟢 NUEVA SESIÓN CONECTADA: {st.session_state.session_id}")
+    print(f"{'='*60}\n")
+
 if "chain" not in st.session_state:
     st.session_state.chain = []
 if "global" not in st.session_state:
@@ -198,10 +207,73 @@ if "edit_idx" not in st.session_state:
 if "last_backend" not in st.session_state:
     st.session_state["last_backend"] = None
 
+# Función de limpieza de archivos antiguos (>30 min)
+def cleanup_old_plots(plots_dir: Path, max_age_minutes: int = 30):
+    """Elimina archivos de plots más antiguos que max_age_minutes."""
+    import time
+    try:
+        current_time = time.time()
+        for file_path in plots_dir.glob("*"):
+            if file_path.is_file():
+                file_age_minutes = (current_time - file_path.stat().st_mtime) / 60
+                if file_age_minutes > max_age_minutes:
+                    try:
+                        file_path.unlink()
+                    except Exception:
+                        pass  # Ignorar si no se puede eliminar
+    except Exception:
+        pass  # Ignorar errores de limpieza
+
+# Contar sesiones activas (archivos únicos en plots)
+def count_active_sessions():
+    """Cuenta sesiones activas basándose en archivos únicos con session_id."""
+    try:
+        from pathlib import Path
+        import re
+        plots_dir = Path("plots")
+        if not plots_dir.exists():
+            return 0, set()
+        
+        # Buscar todos los archivos con patrón *_sessionid.png
+        session_ids = set()
+        # Patrón para session_id válido: 8 caracteres hexadecimales (UUID corto)
+        uuid_pattern = re.compile(r'^[a-f0-9]{8}$')
+        
+        for file in plots_dir.glob("*_*.png"):
+            # Extraer session_id del nombre (formato: tipo_sessionid.png)
+            parts = file.stem.split("_")
+            if len(parts) >= 2:
+                potential_id = parts[-1]  # Último elemento
+                # Validar que sea un UUID de 8 chars hex
+                if uuid_pattern.match(potential_id):
+                    session_ids.add(potential_id)
+        
+        return len(session_ids), session_ids
+    except Exception:
+        return 0, set()
+
+# Mostrar sesiones activas en consola
+active_count, active_ids = count_active_sessions()
+if active_count > 0:
+    print(f"\n📊 SESIONES ACTIVAS: {active_count}")
+    print(f"   IDs: {', '.join(sorted(active_ids))}")
+    print()
+
+# Ejecutar limpieza al iniciar (solo una vez por sesión)
+if "cleanup_done" not in st.session_state:
+    from pathlib import Path
+    cleanup_old_plots(Path("plots"), max_age_minutes=30)
+    st.session_state.cleanup_done = True
+    print(f"🧹 Limpieza automática ejecutada (archivos >30 min eliminados)\n")
+
 # ------------------------- carga / guardado y presets -------------------------
 
 # Título principal del sidebar
 st.sidebar.title("Gestión de Configuración")
+
+# Mostrar sesiones activas
+active_sessions, _ = count_active_sessions()
+st.sidebar.caption(f"🔑 ID de sesión: `{st.session_state.session_id}`")
 st.sidebar.markdown("---")
 
 # Sección 1: Cargar configuración personalizada (expuesta directamente)
@@ -401,48 +473,104 @@ with gcol:
     st.markdown("##### Ruido del Sistema")
     
     enable_awgn = st.checkbox(
-        "Activar Ruido AWGN",
+        "Activar Ruido del Sistema",
         value=g.get("enable_awgn", False),
-        help="""Añade ruido gaussiano blanco aditivo (AWGN) tanto en transmisor como en receptor.
+        help="""Activa el modelo de ruido del sistema basado en física realista.
         
-Simula:
+**Modelo Automático SNR(Ptx)**:
+- El ruido se calcula automáticamente según la potencia TX
+- A **bajas potencias** (<-10 dBm): dominado por ruido térmico del receptor → SNR muy bajo
+- En la **zona óptima** (0 a +2 dBm): mínimo ruido → SNR máximo (~28-32 dB)
+- A **altas potencias** (>5 dBm): aumenta shot noise → SNR baja gradualmente
+
+**Simula**:
 - Transmisor: Ruido del láser, jitter del modulador, imperfecciones electrónicas
 - Receptor: Shot noise del fotodetector, ruido térmico del TIA, ruido del ADC
 
-El ruido del transmisor se propaga a través del sistema óptico (fibra y EDFAs).
-El ruido del receptor se suma al final de la cadena.
-
-Impacto: Afecta constelaciones, BER, EVM y es visible en waveforms."""
+**Referencia**: Basado en modelos de receiver sensitivity y thermal noise floor.
+Ver: Agrawal - "Fiber Optic Communications" (2007)"""
     )
     
+    # Mostrar gráfico minimalista de la curva SNR(Ptx) cuando se activa
     if enable_awgn:
-        awgn_intensity_db = st.slider(
-            "Intensidad de Ruido (SNR) [dB]",
-            min_value=1.0,
-            max_value=40.0,
-            value=float(g.get("awgn_intensity_db", 25.0)),
-            step=1.0,
-            help="""Controla la intensidad del ruido añadido al sistema (menor SNR = más ruido).
-
-Valores de referencia:
-- 30-40 dB: Sistema de alta calidad (ruido bajo, apenas visible)
-- 22-30 dB: Sistema típico comercial (ruido moderado)
-- 15-22 dB: Sistema con ruido elevado (degradación visible)
-- 10-15 dB: Límite de operación (BER en el umbral)
-- Menor a 10 dB: Ruido extremo (sistema degradado severamente)
-
-NOTA: El ruido interactúa con las mediciones de OSNR del sistema.
-Menor SNR producirá mayor BER y constelaciones más dispersas."""
-        )
-    else:
-        awgn_intensity_db = 25.0
+        import matplotlib.pyplot as plt
+        
+        # Usar columna pequeña para limitar el ancho
+        col1, col2, col3 = st.columns([1, 3, 1])
+        
+        with col1:
+            # Generar curva SNR(Ptx)
+            ptx_range = np.linspace(-20, 10, 150)
+            snr_rx_curve = []
+            
+            for ptx_dbm in ptx_range:
+                snr_max = 32.0
+                if ptx_dbm <= -15:
+                    snr_rx_db = 0.5 + (ptx_dbm + 20) * 0.1
+                    snr_rx_db = max(0.3, min(2.0, snr_rx_db))
+                elif ptx_dbm <= -10:
+                    t = (ptx_dbm + 15) / 5.0
+                    snr_rx_db = 1.5 + t * 1.5
+                elif ptx_dbm <= -6:
+                    t = (ptx_dbm + 10) / 4.0
+                    snr_rx_db = 3.0 + t * 7.0
+                elif ptx_dbm <= -3:
+                    t = (ptx_dbm + 6) / 3.0
+                    snr_rx_db = 10.0 + t * 7.0
+                elif ptx_dbm <= 0:
+                    t = (ptx_dbm + 3) / 3.0
+                    snr_rx_db = 17.0 + (t ** 0.7) * 11.0
+                elif ptx_dbm <= 2:
+                    t = ptx_dbm / 2.0
+                    snr_rx_db = 28.0 + t * 4.0
+                else:
+                    delta = ptx_dbm - 2.0
+                    snr_rx_db = snr_max - (delta * 0.7)
+                    snr_rx_db = max(15.0, snr_rx_db)
+                snr_rx_curve.append(max(0.3, min(snr_max, snr_rx_db)))
+            
+            # Crear figura pequeña tipo badge
+            fig, ax = plt.subplots(figsize=(1.2, 1.2))
+            fig.patch.set_facecolor('#0E1117')  # Fondo oscuro de Streamlit
+            ax.set_facecolor('#0E1117')
+            
+            # Curva principal
+            ax.plot(ptx_range, snr_rx_curve, color='#4A9EFF', linewidth=1.5, alpha=0.9)
+            ax.fill_between(ptx_range, 0, snr_rx_curve, color='#4A9EFF', alpha=0.08)
+            
+            # Zona óptima muy sutil
+            ax.axvspan(-3, 2, alpha=0.05, color='#00FF00')
+            
+            # Etiquetas con estilo minimalista
+            ax.set_xlabel('Ptx [dBm]', fontsize=6, color='#AAAAAA')
+            ax.set_ylabel('SNR [dB]', fontsize=6, color='#AAAAAA')
+            ax.grid(True, alpha=0.12, linestyle='-', linewidth=0.3, color='#444444')
+            ax.set_xlim(-20, 10)
+            ax.set_ylim(0, 35)
+            
+            # Tick labels pequeños y discretos
+            ax.tick_params(labelsize=5, colors='#888888', length=1.5)
+            
+            # Marcadores de zona en texto muy pequeño
+            ax.text(-15, 32, 'Tér', fontsize=5, color='#FF6B6B', alpha=0.5, ha='center')
+            ax.text(0, 32, 'Ópt', fontsize=5, color='#51CF66', alpha=0.5, ha='center')
+            ax.text(8, 32, 'Shot', fontsize=5, color='#FFA94D', alpha=0.5, ha='center')
+            
+            # Quitar bordes innecesarios
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_color('#444444')
+            ax.spines['bottom'].set_color('#444444')
+            ax.spines['left'].set_linewidth(0.5)
+            ax.spines['bottom'].set_linewidth(0.5)
+            
+            plt.tight_layout(pad=0.2)
+            st.pyplot(fig)
+            plt.close()
     
     g["enable_awgn"] = enable_awgn
-    g["awgn_intensity_db"] = awgn_intensity_db
     
-    # Warning para 16QAM con AWGN activado
-    if M_sel == 16 and enable_awgn:
-        st.warning("⚠️ **16QAM + AWGN**: Funcionalidad experimental. DSP coherente en desarrollo - puede dar BER alto (~50%). Recomendado usar QPSK para resultados confiables.")
+   
 
 def _generate_rrc_pulse(beta: float, span: int, sps: int = 8) -> tuple:
     """Genera pulso RRC para visualización en tiempo real"""
@@ -954,8 +1082,13 @@ st.markdown("---")
 
 if st.button("Ejecutar simulación", type="primary"):
     try:
+        # Agregar session_id al config global antes de validar
+        global_with_session = dict(st.session_state["global"])
+        global_with_session["session_id"] = st.session_state.session_id
+        global_with_session["plots_dir"] = plots_dir
+        
         cfg_dict = {
-            "global": st.session_state["global"],
+            "global": global_with_session,
             "pulse":  st.session_state["pulse"],
             "chain":  st.session_state.chain,
         }
@@ -1071,9 +1204,10 @@ def _profile_to_csv_bytes(profile: List[Dict[str, Any]]) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 plots_p = pathlib.Path(plots_dir)
-png1 = plots_p / "constelaciones.png"
-png2 = plots_p / "potencia.png"
-eye  = plots_p / "eye.png"
+session_id = st.session_state.session_id
+png1 = plots_p / f"constelaciones_{session_id}.png"
+png2 = plots_p / f"potencia_{session_id}.png"
+eye  = plots_p / f"eye_{session_id}.png"
 
 st.divider()
 st.markdown("### Resultados de la Simulación")
@@ -1087,53 +1221,24 @@ chips = []
 bk = st.session_state.get("last_backend") or res.get("backend")
 if bk: chips.append(f"<span class='meta-chip'>Backend: {bk}</span>")
 
-# Obtener métricas
-ber = res.get("BER_est_BPSK", None)
-if ber is None:
-    ber = res.get("BER_post", None)
-osnr = res.get("OSNR_final_dB", None)
-snr_eff = res.get("SNR_eff_dB", None)
+# Obtener métricas unificadas (nueva estructura)
+ber = res.get("BER", None)  # BER unificado
+snr_sym = res.get("SNR_sym_dB", None)  # SNR medido post-DSP
+osnr = res.get("OSNR_final_dB", None)  # OSNR óptico
 
-# Mostrar solo métricas ópticas relevantes
+# Mostrar métricas relevantes
 if ber is not None:
     chips.append(f"<span class='meta-chip'>BER: {float(ber)*100:.4f}%</span>")
 
-if osnr is not None:
-    chips.append(f"<span class='meta-chip'>OSNR (ASE): {osnr:.2f} dB</span>")
-
-if snr_eff is not None:
-    chips.append(f"<span class='meta-chip'>SNR efectivo (ASE+AWGN, pre-MF): {snr_eff:.2f} dB</span>")
-    
-    # Calcular BER teórico desde SNR efectivo para referencia (pre matched filter)
-    try:
-        from math import erfc, sqrt
-        Bo_Hz = 12.5e9  # Ancho de banda óptico de referencia
-        Rb = res.get("global", {}).get("Rb", 32e9)
-        SNR_eff_lin = 10.0**(snr_eff/10.0)
-        SNR_theoretical_lin = SNR_eff_lin * (Bo_Hz / Rb)
-        ber_teorico = 0.5 * erfc(sqrt(max(SNR_theoretical_lin, 1e-12))/sqrt(2.0))
-        chips.append(f"<span class='meta-chip'>BER teórico (pre-MF, desde SNR): {ber_teorico*100:.4f}%</span>")
-    except Exception:
-        pass
-elif osnr is not None:
-    # Si no hay SNR efectivo, calcular desde OSNR (sin AWGN)
-    try:
-        from math import erfc, sqrt
-        Bo_Hz = 12.5e9  # Ancho de banda óptico de referencia
-        Rb = res.get("global", {}).get("Rb", 32e9)
-        OSNR_lin = 10.0**(osnr/10.0)
-        SNR_theoretical_lin = OSNR_lin * (Bo_Hz / Rb)
-        ber_teorico = 0.5 * erfc(sqrt(max(SNR_theoretical_lin, 1e-12))/sqrt(2.0))
-        chips.append(f"<span class='meta-chip'>BER teórico (desde OSNR): {ber_teorico*100:.4f}%</span>")
-    except Exception:
-        pass
+if snr_sym is not None:
+    chips.append(f"<span class='meta-chip'>SNR medido (post-DSP): {snr_sym:.2f} dB</span>")
 
 if chips:
     st.markdown("<div class='meta-row'>" + "".join(chips) + "</div>", unsafe_allow_html=True)
 
 with st.expander("Resumen de la última ejecución", expanded=True):
     if log:
-        cols = st.columns(8)
+        cols = st.columns(7)  # 7 columnas: Backend, Tiempo, OSNR, SNR pre-DSP, SNR post-DSP, Pout, BER
 
         # Backend abreviado para que no se corte
         bk_full = res.get("backend", "")
@@ -1155,9 +1260,8 @@ with st.expander("Resumen de la última ejecución", expanded=True):
             help="Tiempo total de ejecución de la simulación en segundos. Incluye propagación SSFM, procesamiento DSP y generación de gráficos."
         )
 
-        # OSNR (solo ruido óptico ASE) y SNR efectivo (ASE + AWGN)
+        # OSNR (solo ruido óptico ASE)
         osnr = res.get("OSNR_final_dB", None)
-        snr_eff = res.get("SNR_eff_dB", None)
         
         if osnr is not None:
             cols[2].metric(
@@ -1172,41 +1276,49 @@ with st.expander("Resumen de la última ejecución", expanded=True):
                 help="Optical Signal-to-Noise Ratio al final del enlace. No disponible para esta simulación."
             )
 
+        # SNR pre-DSP (medido en waveform antes del matched filter)
+        snr_pre = res.get("SNR_pre_dsp_dB", None)
+        if snr_pre is not None:
+            cols[3].metric(
+                "SNR pre-DSP [dB]",
+                f"{snr_pre:.2f}",
+                help="SNR medido directamente en la waveform recibida ANTES del matched filter. Refleja la calidad de la señal tal como llega al receptor, incluyendo todos los ruidos (ASE, AWGN TX/RX, no linealidades, dispersión). Este es el SNR 'crudo' sin procesamiento DSP."
+            )
+        else:
+            cols[3].metric(
+                "SNR pre-DSP",
+                "n/a",
+                help="SNR pre-DSP no disponible."
+            )
+
+        # SNR medido post-DSP
+        snr_sym = res.get("SNR_sym_dB", None)
+        if snr_sym is not None:
+            cols[4].metric(
+                "SNR post-DSP [dB]",
+                f"{snr_sym:.2f}",
+                help="SNR medido después del procesamiento DSP completo (sincronización, CPR, matched filter). Incluye todos los ruidos: ASE, AWGN TX/RX, efectos no lineales, dispersión residual. Este es el SNR real que 've' el demodulador en los símbolos recuperados. Valores típicos: >15 dB excelente, 10-15 dB bueno, 5-10 dB degradado, <5 dB crítico."
+            )
+        else:
+            cols[4].metric(
+                "SNR post-DSP",
+                "n/a",
+                help="SNR medido post-DSP no disponible."
+            )
+
         pout = res.get("Pout_dBm", None)
-        cols[3].metric(
+        cols[5].metric(
             "Pout [dBm]", 
             f"{pout:.2f}" if pout is not None else "n/a",
             help="Potencia óptica de salida al final del enlace en dBm. Indica cuánta potencia llega al receptor después de todas las pérdidas y ganancias. Valores típicos: -10 a -25 dBm. Si es muy baja (<-30 dBm), el receptor tendrá problemas de sensibilidad."
         )
         
-        ber_bpsk  = res.get("BER_est_BPSK", None)
-        cols[4].metric(
-            "BER BPSK", 
-            f"{ber_bpsk:.3e}" if ber_bpsk is not None else "n/a",
-            help="Bit Error Rate estimado asumiendo modulación BPSK y detección directa (IMDD). Fracción de bits recibidos incorrectamente. Valores típicos: <1e-9 excelente (error-free), 1e-3 a 1e-9 aceptable con FEC, >1e-3 inutilizable. Solo válido para enlaces IMDD, no para coherente."
-        )
-        
-        # Coherent extras if present: place all metrics in the same row to avoid empty gaps
-        evm_post = res.get("EVM_post_dB", None)
-        Q_post = res.get("Q_post", None)
-        ber_post = res.get("BER_post", None)
-
-        cols[5].metric(
-            "EVM post [dB]",
-            f"{evm_post:.2f}" if evm_post is not None else "-",
-            help="Error Vector Magnitude después del receptor coherente en dB. Mide la desviación RMS entre símbolos recibidos e ideales, normalizada por potencia de señal. Valores típicos: <-25 dB excelente, -20 a -25 dB bueno, -15 a -20 dB aceptable, >-15 dB degradado. A menor valor (más negativo), mejor calidad. Solo para receptor coherente (QPSK/16-QAM)."
-        )
-
+        # BER unificado (para todas las modulaciones)
+        ber = res.get("BER", None)
         cols[6].metric(
-            "Q post",
-            f"{Q_post:.2f}" if Q_post is not None else "-",
-            help="Factor de calidad Q en escala lineal después del receptor coherente. Relación señal-ruido en el espacio de símbolos. Q = distancia entre símbolos / desviación estándar del ruido. Valores típicos: Q>6 excelente (BER<1e-9), Q=4-6 bueno, Q<4 degradado. Se relaciona con BER mediante función Q inversa. Solo para receptor coherente."
-        )
-
-        cols[7].metric(
-            "BER post",
-            f"{ber_post:.3e}" if ber_post is not None else "-",
-            help="Bit Error Rate medido después del receptor coherente. Fracción real de bits decodificados incorrectamente considerando la modulación utilizada (BPSK/QPSK/16-QAM). Valores típicos: <1e-12 excelente, 1e-9 a 1e-12 muy bueno, 1e-6 a 1e-9 bueno (con FEC), 1e-3 a 1e-6 límite FEC, >1e-3 inutilizable. Métrica definitiva de calidad del enlace."
+            "BER", 
+            f"{ber:.3e}" if ber is not None else "n/a",
+            help="Bit Error Rate medido con el método mejorado de demodulación (sincronización temporal, CPR, normalización de ganancia). Fracción de bits decodificados incorrectamente. Valores típicos: <1e-12 excelente, 1e-9 a 1e-12 muy bueno, 1e-6 a 1e-9 bueno (con FEC), 1e-3 a 1e-6 límite FEC, >1e-3 inutilizable. Válido para BPSK, QPSK y 16-QAM."
         )
     else:
         st.info("Aún no hay logs en la carpeta seleccionada.")
@@ -1234,8 +1346,8 @@ with col3:
         st.image(str(eye), caption="Eye Diagram", use_container_width=True)
 
 # Waveforms TX/RX si existen
-waveform_plot = plots_p / "waveform_comparison.png"
-waveform_h5 = plots_p / "waveforms.h5"
+waveform_plot = plots_p / f"waveform_comparison_{session_id}.png"
+waveform_h5 = plots_p / f"waveforms_{session_id}.h5"
 if waveform_plot.exists():
     st.divider()
     st.markdown("### Waveforms TX vs RX")
@@ -1248,10 +1360,13 @@ if waveform_plot.exists():
             import io
             import datetime
             
-            # Generar timestamp para nombres únicos
+            # Generar timestamp y metadata para nombres descriptivos únicos
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             mod_name = res.get("global", {}).get("mod", "BPSK")
             Rb_Gbps = res.get("global", {}).get("Rb", 32e9) / 1e9
+            Ptx_W = res.get("global", {}).get("Ptx", 0.001)
+            Ptx_dBm = 10 * np.log10(Ptx_W * 1000) if Ptx_W > 0 else -30
+            L_total_km = res.get("Lcum_m", 0.0) / 1000.0
             
             with h5py.File(waveform_h5, 'r') as f:
                 tx_real = f['tx/real'][:]
@@ -1306,7 +1421,7 @@ if waveform_plot.exists():
                 st.download_button(
                     label="Descargar TX",
                     data=csv_tx,
-                    file_name=f"waveform_TX_{mod_name}_{Rb_Gbps:.0f}Gbps_{timestamp}.csv",
+                    file_name=f"TX_{mod_name}_{Ptx_dBm:.1f}dBm_{L_total_km:.0f}km_{timestamp}.csv",
                     mime="text/csv",
                     help="Señal transmitida (después de pulse shaping)",
                     use_container_width=True
@@ -1316,7 +1431,7 @@ if waveform_plot.exists():
                 st.download_button(
                     label="Descargar RX (pre-DSP)",
                     data=csv_rx,
-                    file_name=f"waveform_RX_preDSP_{mod_name}_{Rb_Gbps:.0f}Gbps_{timestamp}.csv",
+                    file_name=f"RX_preDSP_{mod_name}_{Ptx_dBm:.1f}dBm_{L_total_km:.0f}km_{timestamp}.csv",
                     mime="text/csv",
                     help="Señal recibida después de propagación óptica (antes de matched filter)",
                     use_container_width=True
@@ -1327,7 +1442,7 @@ if waveform_plot.exists():
                     st.download_button(
                         label="Descargar RX (post-MF)",
                         data=csv_rx_post,
-                        file_name=f"waveform_RX_postMF_{mod_name}_{Rb_Gbps:.0f}Gbps_{timestamp}.csv",
+                        file_name=f"RX_postMF_{mod_name}_{Ptx_dBm:.1f}dBm_{L_total_km:.0f}km_{timestamp}.csv",
                         mime="text/csv",
                         help="Señal recibida después de matched filter RRC",
                         use_container_width=True

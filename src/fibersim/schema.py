@@ -45,6 +45,10 @@ class GlobalPar(BaseModel):
     # Ruido AWGN (Additive White Gaussian Noise) - Unified control
     enable_awgn: bool = False  # Activar ruido gaussiano en TX y RX
     awgn_intensity_db: float = 25.0  # Intensidad del ruido (SNR base) [dB]
+    
+    # Parámetros de sesión (multiusuario)
+    session_id: str = "default"  # ID único de sesión para archivos
+    plots_dir: str = "plots"  # Directorio de plots
 
 class DspPar(BaseModel):
     """Parámetros de DSP en recepción coherente.

@@ -103,6 +103,9 @@ def run_chain(
 
         elif btype == "edfa":
             A, info = edfa_block(A, info, par)
+            # Actualizar Pmean después del EDFA para Pout correcto
+            info["Pmean"] = float(xp.mean(xp.abs(A) ** 2))
+            
             if do_const:
                 B = rxF(A)
                 # Delay total = TX delay + RX delay
@@ -127,8 +130,15 @@ def run_chain(
         else:
             raise ValueError(f"Bloque no soportado aún: {btype}")
 
+    # Guardar señal ANTES del matched filter RX para calcular SNR pre-DSP
+    A_before_mf = A  # Señal después de propagación pero antes de matched filter RX
+    
     Arx = rxF(A)
+    A_rx_matched = Arx  # Señal después del matched filter (más limpia para eye diagram)
     info["Lcum"] = zCum
+    
+    # Actualizar Pmean final (después del último bloque, sea fibra o EDFA)
+    info["Pmean"] = float(xp.mean(xp.abs(A) ** 2))
 
     # Calcular delay total correctamente: TX filter delay + RX filter delay
     # Cada filtro RRC tiene group delay = span * sps / 2
@@ -144,5 +154,7 @@ def run_chain(
         "osnrZ_dB": osnrZ,
         "delay_samp": delay_total_samp,
         "sps": sps,
+        "A_before_mf": A_before_mf,  # Señal pre-matched filter para SNR pre-DSP
+        "A_rx_matched": A_rx_matched,  # Señal post-matched filter para eye diagram limpio
     }
     return Arx, info, diag

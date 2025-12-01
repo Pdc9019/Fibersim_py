@@ -245,22 +245,58 @@ def _symbols_to_bits(s: np.ndarray, mod: str) -> np.ndarray:
     if mod == "BPSK":
         return (s.real < 0).astype(np.uint8)
     if mod == "QPSK":
-        # invert mapping used in map_bits_to_symbols (Gray)
-        i = (s.real >= 0).astype(np.uint8)  # 1 if >=0 -> bit 0 for msb (0)
-        q = (s.imag >= 0).astype(np.uint8)
-        b0 = (1 - i).astype(np.uint8)
-        b1 = (i ^ (1 - q)).astype(np.uint8)
+        # Inverse Gray mapping for QPSK
+        # TX: I = 1 - 2*b0  =>  b0 = (1 - I)/2  =>  b0 = 0 if I>0, else 1
+        #     Q = 1 - 2*(b0 XOR b1)  =>  b0 XOR b1 = (1 - Q)/2  =>  0 if Q>0, else 1
+        # Therefore: b1 = b0 XOR ((1 - Q)/2)
+        b0 = (s.real < 0).astype(np.uint8)  # 0 if real>=0, 1 if real<0
+        q_bit = (s.imag < 0).astype(np.uint8)  # 0 if imag>=0, 1 if imag<0
+        b1 = (b0 ^ q_bit).astype(np.uint8)
         return np.column_stack([b0, b1]).ravel()
     if mod == "16QAM":
         scale = np.sqrt(10.0)
         x = np.round(np.clip(s.real * scale, -3, 3)).astype(int)
         y = np.round(np.clip(s.imag * scale, -3, 3)).astype(int)
         def lev_to_bits(v):
-            # invert Gray per axis: +3->00, +1->01, -1->10, -3->11
-            # msb = 1 for negative levels, lsb true for levels {+1, -3}
-            msb = (v < 0).astype(np.uint8)
-            lsb = ((v == 1) | (v == -1)).astype(np.uint8)
-            return msb, lsb
+            # Mapeo Gray inverso por eje (debe coincidir EXACTAMENTE con gray2level del TX)
+            # TX gray2level: two = 2*b1 + b0
+            # 00 (two=0) -> +3
+            # 01 (two=1) -> +1
+            # 10 (two=2) -> -1
+            # 11 (two=3) -> -3
+            
+            # RX inverso (symbol -> bits [b1, b0]):
+            # +3 -> 00
+            # +1 -> 01
+            # -1 -> 10
+            # -3 -> 11
+            
+            # Crear tabla de mapeo directo
+            b1 = np.zeros_like(v, dtype=np.uint8)
+            b0 = np.zeros_like(v, dtype=np.uint8)
+            
+            # +3 -> 00
+            mask = (v == 3)
+            b1[mask] = 0
+            b0[mask] = 0
+            
+            # +1 -> 01
+            mask = (v == 1)
+            b1[mask] = 0
+            b0[mask] = 1
+            
+            # -1 -> 10
+            mask = (v == -1)
+            b1[mask] = 1
+            b0[mask] = 0
+            
+            # -3 -> 11
+            mask = (v == -3)
+            b1[mask] = 1
+            b0[mask] = 1
+            
+            return b1, b0
+        
         msb_i, lsb_i = lev_to_bits(x)
         msb_q, lsb_q = lev_to_bits(y)
         return np.column_stack([msb_i, lsb_i, msb_q, lsb_q]).ravel().astype(np.uint8)
@@ -271,13 +307,13 @@ def ber_from_symbols(tx_syms_ref: np.ndarray, rx_syms: np.ndarray, M: int) -> fl
 
     - Truncates to min length.
     - For BPSK, does phase alignment and thresholding on real part.
-    - For QPSK/16QAM, hard-slice both to the ideal constellation first, then demap to bits (Gray) and compare.
+    - For QPSK/16QAM, assumes symbols are ALREADY phase-aligned (done in main.py)
+      and just does hard decision + bit comparison.
 
     Args:
         tx_syms_ref: Reference transmitted symbols (NumPy).
-        rx_syms: Received symbols.
-        M: Optional M for backward compatibility (ignored if mod provided).
-        mod: Modulation string.
+        rx_syms: Received symbols (should be pre-aligned for QPSK/16QAM).
+        M: Modulation order (2, 4, or 16).
     """
     mod = {2: "BPSK", 4: "QPSK", 16: "16QAM"}.get(int(M), "BPSK")
 
@@ -288,17 +324,33 @@ def ber_from_symbols(tx_syms_ref: np.ndarray, rx_syms: np.ndarray, M: int) -> fl
     rx = np.asarray(rx_syms[:n])
 
     if mod == "BPSK":
+        # BPSK: align phase then threshold
         theta = phase_from_reference(rx, tx)
         rx_rot = rx * np.exp(-1j * theta)
         b_tx = (tx.real < 0).astype(np.uint8)
         b_rx = (rx_rot.real < 0).astype(np.uint8)
         return float(np.mean(b_tx ^ b_rx))
 
-    # QPSK / 16QAM: slice then compare bits
-    rx_s = slice_symbols(rx, mod)
-    tx_s = slice_symbols(tx, mod)
-    b_rx = _symbols_to_bits(rx_s, mod)
-    b_tx = _symbols_to_bits(tx_s, mod)
+    # QPSK / 16QAM: Símbolos YA deben venir alineados desde main.py
+    # Hacemos hard decision en RX (mapeo al símbolo ideal más cercano) y comparamos bits
+    
+    # 1. Normalizar ganancia RX (para que coincida con TX en potencia promedio)
+    p_tx = np.mean(np.abs(tx) ** 2)
+    p_rx = np.mean(np.abs(rx) ** 2)
+    if p_rx > 1e-30:
+        gain = np.sqrt(p_tx / p_rx)
+        rx_normalized = rx * gain
+    else:
+        rx_normalized = rx
+    
+    # 2. Hard decision en RX: mapear cada símbolo al punto ideal más cercano
+    rx_decided = slice_symbols(rx_normalized, mod)
+    
+    # 3. Demap ambos a bits y comparar
+    b_tx = _symbols_to_bits(tx, mod)  # TX original
+    b_rx = _symbols_to_bits(rx_decided, mod)  # RX después de hard decision
+    
+    # 4. Comparar bits
     m = min(b_rx.size, b_tx.size)
     if m == 0:
         return float("nan")
@@ -333,3 +385,402 @@ def find_best_delay(
     if best_syms is None:
         best_syms = slice_to_symbols(rx_wave, sps=sps, delay_samp=guess_delay, Nsym=Nsym)
     return best_d, best_ber, best_syms
+
+# ==================== NUEVAS FUNCIONES DE DEMODULACIÓN MEJORADA ====================
+
+def temporal_sync_correlation(
+    rx_syms: np.ndarray,
+    tx_syms: np.ndarray,
+    chunk_size: int = 4096
+) -> int:
+    """
+    Sincronización temporal usando correlación cruzada.
+    
+    Args:
+        rx_syms: Símbolos recibidos (downsampled)
+        tx_syms: Símbolos transmitidos de referencia
+        chunk_size: Tamaño del chunk para correlación (evita saturar memoria)
+    
+    Returns:
+        lag: Desplazamiento óptimo en símbolos
+    """
+    from scipy.signal import correlate
+    
+    # Normalizar para mejorar la correlación
+    tx_norm = tx_syms / (np.std(tx_syms) + 1e-20)
+    rx_norm = rx_syms / (np.std(rx_syms) + 1e-20)
+    
+    # Usar chunk para no saturar memoria
+    safe_len = min(len(tx_norm), len(rx_norm))
+    chunk = min(chunk_size, safe_len)
+    
+    # Correlación cruzada
+    corr = correlate(rx_norm[:chunk], tx_norm[:chunk], mode='full')
+    lag = int(np.argmax(np.abs(corr)) - (chunk - 1))
+    
+    # Debug: mostrar información de correlación
+    max_corr = np.max(np.abs(corr))
+    print(f"[Sync] Correlación: lag={lag} símbolos, max_corr={max_corr:.3f}, chunk={chunk}")
+    
+    return lag
+
+def align_signals_by_lag(
+    rx_syms: np.ndarray,
+    tx_syms: np.ndarray,
+    lag: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Alinea las señales RX y TX según el lag calculado.
+    
+    Args:
+        rx_syms: Símbolos recibidos
+        tx_syms: Símbolos transmitidos
+        lag: Desplazamiento en símbolos
+    
+    Returns:
+        (tx_aligned, rx_aligned): Señales alineadas con mismo largo
+    """
+    if lag > 0:
+        rx_aligned = rx_syms[lag:]
+        tx_aligned = tx_syms[:len(rx_aligned)]
+    else:
+        tx_aligned = tx_syms[-lag:]
+        rx_aligned = rx_syms[:len(tx_aligned)]
+    
+    # Recortar al mismo largo
+    L = min(len(tx_aligned), len(rx_aligned))
+    return tx_aligned[:L], rx_aligned[:L]
+
+def carrier_phase_recovery(
+    rx_syms: np.ndarray,
+    tx_syms: np.ndarray,
+    window_len: int = 50
+) -> np.ndarray:
+    """
+    Recuperación de fase carrier con filtrado de media móvil.
+    
+    Estima y compensa el error de fase usando los datos conocidos (Data-Aided).
+    El filtro de media móvil suaviza la estimación de fase, eliminando jitter.
+    
+    Args:
+        rx_syms: Símbolos recibidos alineados (ya normalizados en potencia)
+        tx_syms: Símbolos transmitidos de referencia alineados
+        window_len: Longitud de la ventana del filtro de media móvil
+    
+    Returns:
+        rx_corrected: Símbolos con fase corregida
+    """
+    # Estimar error de fase instantáneo: usar conj(tx)*rx
+    # Esto da el error de fase que necesita SUMARSE (no restarse)
+    phase_err_vec = np.conj(tx_syms) * rx_syms
+    phase_inst = np.unwrap(np.angle(phase_err_vec))
+    
+    # Filtro de media móvil para suavizar
+    if window_len > 1:
+        phase_est = np.convolve(phase_inst, np.ones(window_len) / window_len, mode='same')
+    else:
+        phase_est = phase_inst
+    
+    # Corregir fase: RESTAR el error estimado (porque phase_err_vec tiene el error)
+    rx_corrected = rx_syms * np.exp(-1j * phase_est)
+    
+    return rx_corrected
+
+def normalize_gain(
+    rx_syms: np.ndarray,
+    tx_syms: np.ndarray
+) -> np.ndarray:
+    """
+    Normaliza la ganancia de RX para que coincida con la potencia de TX.
+    
+    Esto es crucial para el cálculo correcto de SNR y BER, ya que
+    asegura que la potencia de señal esté correctamente escalada.
+    
+    Args:
+        rx_syms: Símbolos recibidos con fase corregida
+        tx_syms: Símbolos transmitidos de referencia
+    
+    Returns:
+        rx_normalized: Símbolos con ganancia normalizada
+    """
+    p_tx = np.mean(np.abs(tx_syms) ** 2)
+    p_rx = np.mean(np.abs(rx_syms) ** 2)
+    
+    if p_rx <= 0:
+        return rx_syms
+    
+    gain = np.sqrt(p_tx / p_rx)
+    return rx_syms * gain
+
+def calculate_snr_from_evm(
+    rx_syms: np.ndarray,
+    tx_syms: np.ndarray,
+    edge_cut: int = 100
+) -> tuple[float, float]:
+    """
+    Calcula SNR basado en el vector de error (EVM).
+    
+    Ignora los bordes para evitar transitorios de filtros.
+    
+    Args:
+        rx_syms: Símbolos recibidos procesados (fase corregida y ganancia normalizada)
+        tx_syms: Símbolos transmitidos de referencia
+        edge_cut: Número de símbolos a ignorar en cada borde
+    
+    Returns:
+        (snr_linear, snr_db): SNR en escala lineal y dB
+    """
+    L = len(rx_syms)
+    
+    # Ajustar edge_cut si la señal es muy corta
+    if L < 2 * edge_cut:
+        edge_cut = 0
+    
+    # Ignorar bordes
+    if edge_cut > 0:
+        rx = rx_syms[edge_cut:-edge_cut]
+        tx = tx_syms[edge_cut:-edge_cut]
+    else:
+        rx = rx_syms
+        tx = tx_syms
+    
+    # Calcular potencias
+    error_vec = rx - tx
+    p_signal = np.mean(np.abs(tx) ** 2)
+    p_noise = np.mean(np.abs(error_vec) ** 2)
+    
+    if p_noise <= 0 or p_signal <= 0:
+        return float('nan'), float('nan')
+    
+    snr_lin = p_signal / p_noise
+    snr_db = 10.0 * np.log10(snr_lin)
+    
+    return float(snr_lin), float(snr_db)
+
+def demodulate_hard_decision(
+    syms: np.ndarray,
+    M: int
+) -> np.ndarray:
+    """
+    Decisión dura (Hard Decision) para cálculo de BER.
+    
+    Mapea símbolos continuos a los puntos más cercanos de la constelación.
+    
+    Args:
+        syms: Símbolos a demodular
+        M: Orden de modulación (2=BPSK, 4=QPSK, 16=16QAM)
+    
+    Returns:
+        Símbolos o bits demodulados (formato depende de M)
+    """
+    if M == 2:  # BPSK
+        # Retorna bits directamente (0 o 1)
+        return (syms.real > 0).astype(int)
+    
+    elif M == 4:  # QPSK
+        # Retorna como complejo para comparación fácil
+        I_bits = (syms.real > 0).astype(int)
+        Q_bits = (syms.imag > 0).astype(int)
+        return I_bits + 1j * Q_bits
+    
+    elif M == 16:  # 16-QAM
+        # Normalizar a niveles -3, -1, 1, 3
+        # Potencia promedio teórica de 16QAM es 10
+        p_avg = np.mean(np.abs(syms) ** 2)
+        s = syms * np.sqrt(10.0 / (p_avg + 1e-20))
+        
+        # Decisor multinivel por eje
+        def decision_axis(x):
+            d = 2.0 * np.floor((x + 4.0) / 2.0) - 3.0
+            return np.clip(d, -3.0, 3.0)
+        
+        I_dec = decision_axis(s.real)
+        Q_dec = decision_axis(s.imag)
+        return I_dec + 1j * Q_dec
+    
+    else:
+        raise ValueError(f"M={M} no soportado")
+
+def calculate_ber_improved(
+    rx_syms: np.ndarray,
+    tx_syms: np.ndarray,
+    M: int,
+    edge_cut: int = 100
+) -> float:
+    """
+    Calcula BER usando decisiones duras con el método mejorado.
+    
+    Args:
+        rx_syms: Símbolos recibidos procesados
+        tx_syms: Símbolos transmitidos de referencia
+        M: Orden de modulación
+        edge_cut: Símbolos a ignorar en los bordes
+    
+    Returns:
+        BER: Bit Error Rate
+    """
+    L = len(rx_syms)
+    
+    # Ajustar edge_cut
+    if L < 2 * edge_cut:
+        edge_cut = 0
+    
+    # Ignorar bordes
+    if edge_cut > 0:
+        rx = rx_syms[edge_cut:-edge_cut]
+        tx = tx_syms[edge_cut:-edge_cut]
+    else:
+        rx = rx_syms
+        tx = tx_syms
+    
+    # Demodular con decisión dura
+    rx_dec = demodulate_hard_decision(rx, M)
+    tx_dec = demodulate_hard_decision(tx, M)
+    
+    # Calcular BER según modulación
+    if M == 2:  # BPSK
+        bit_errors = np.sum(rx_dec != tx_dec)
+        total_bits = len(rx_dec)
+        ber = bit_errors / total_bits if total_bits > 0 else 0.0
+    
+    elif M == 4:  # QPSK
+        # Parte Real e Imaginaria cuentan como bits distintos
+        # Convertir a int para evitar problemas de comparación con floats
+        rx_I = rx_dec.real.astype(int)
+        rx_Q = rx_dec.imag.astype(int)
+        tx_I = tx_dec.real.astype(int)
+        tx_Q = tx_dec.imag.astype(int)
+        
+        bit_errors_I = np.sum(rx_I != tx_I)
+        bit_errors_Q = np.sum(rx_Q != tx_Q)
+        bit_errors = bit_errors_I + bit_errors_Q
+        total_bits = 2 * len(rx_dec)
+        ber = bit_errors / total_bits if total_bits > 0 else 0.0
+    
+    elif M == 16:  # 16-QAM
+        # SER (Symbol Error Rate)
+        sym_errors = np.sum(rx_dec != tx_dec)
+        total_syms = len(rx_dec)
+        ser = sym_errors / total_syms if total_syms > 0 else 0.0
+        # BER ~ SER / log2(M) para Gray coding
+        ber = ser / 4.0
+    
+    else:
+        return float('nan')
+    
+    return float(ber)
+
+def improved_demodulation_pipeline(
+    rx_wave: np.ndarray,
+    tx_syms: np.ndarray,
+    sps: int,
+    M: int,
+    guess_delay: int = 0,
+    edge_cut: int = 100,
+    cpr_window: int = 50,
+    use_correlation_sync: bool = True
+) -> dict:
+    """
+    Pipeline completo de demodulación mejorado.
+    
+    Implementa el método robusto de procesamiento:
+    1. Downsampling con búsqueda de fase óptima
+    2. Sincronización temporal (correlación o downsampling directo)
+    3. Alineación de señales
+    4. Recuperación de fase carrier (CPR)
+    5. Normalización de ganancia
+    6. Cálculo de SNR (basado en EVM)
+    7. Cálculo de BER (decisiones duras)
+    
+    Args:
+        rx_wave: Forma de onda recibida (sobremuestreada)
+        tx_syms: Símbolos transmitidos de referencia
+        sps: Muestras por símbolo
+        M: Orden de modulación (2, 4, 16)
+        guess_delay: Estimación inicial del retardo en muestras
+        edge_cut: Símbolos a ignorar en bordes para métricas
+        cpr_window: Ventana del filtro CPR
+        use_correlation_sync: Si True, usa correlación; si False, usa downsampling directo
+    
+    Returns:
+        dict con: 'rx_syms', 'snr_db', 'ber', 'delay_samp', 'tx_aligned', 'rx_aligned'
+    """
+    
+    # 1. TX: símbolos directos (generación digital, asumimos fase 0)
+    tx_syms_down = tx_syms
+    
+    # 2. RX: Downsampling - buscar la fase óptima usando CORRELACIÓN, no potencia
+    # El método de "máxima potencia" es INCORRECTO - puede elegir ruido
+    # En su lugar, probamos cada fase y vemos cuál da mejor correlación con TX
+    print(f"[Demod] Buscando mejor fase de muestreo entre {sps} opciones...")
+    
+    best_phase = 0
+    best_corr = -np.inf
+    
+    for phase in range(sps):
+        rx_test = rx_wave[phase::sps]
+        L_test = min(len(tx_syms_down), len(rx_test), 1000)  # Usar primeros 1000 símbolos
+        if L_test < 100:
+            continue
+        # Correlación normalizada
+        corr_val = np.abs(np.vdot(tx_syms_down[:L_test], rx_test[:L_test]))
+        if corr_val > best_corr:
+            best_corr = corr_val
+            best_phase = phase
+    
+    rx_syms_down = rx_wave[best_phase::sps]
+    print(f"[Demod] Fase óptima: {best_phase}/{sps} (corr={best_corr:.2e})")
+    
+    # 3. Sincronización temporal
+    if use_correlation_sync:
+        # Método de correlación cruzada
+        lag = temporal_sync_correlation(rx_syms_down, tx_syms_down, chunk_size=4096)
+        tx_aligned, rx_aligned = align_signals_by_lag(tx_syms_down, rx_syms_down, lag)
+        delay_used = best_phase + lag * sps
+    else:
+        # Método de downsampling directo con guess_delay
+        # Aplicar guess_delay para compensar retardo de grupo del filtro
+        delay_in_syms = guess_delay // sps
+        if delay_in_syms > 0:
+            rx_syms_down = rx_syms_down[delay_in_syms:]
+        
+        L = min(len(tx_syms_down), len(rx_syms_down))
+        tx_aligned = tx_syms_down[:L]
+        rx_aligned = rx_syms_down[:L]
+        delay_used = guess_delay
+    
+    # 4. Normalización de ganancia (ANTES de CPR para que funcione correctamente)
+    rx_normalized = normalize_gain(rx_aligned, tx_aligned)
+    print(f"[Demod] Símbolos alineados: TX={len(tx_aligned)}, RX={len(rx_aligned)}")
+    
+    # 5. Recuperación de fase carrier (CPR) - ahora con potencias normalizadas
+    rx_cpr = carrier_phase_recovery(rx_normalized, tx_aligned, window_len=cpr_window)
+    
+    # 6. Cálculo de SNR
+    snr_lin, snr_db = calculate_snr_from_evm(rx_cpr, tx_aligned, edge_cut=edge_cut)
+    
+    # 7. Cálculo de BER
+    ber = calculate_ber_improved(rx_cpr, tx_aligned, M=M, edge_cut=edge_cut)
+    
+    # Debug: verificar alineación y métricas
+    if len(tx_aligned) > 0:
+        # Verificar fase residual
+        phase_check = np.angle(np.vdot(tx_aligned[:min(100, len(tx_aligned))], 
+                                        rx_cpr[:min(100, len(rx_cpr))]))
+        
+        # Mostrar algunos símbolos para verificación
+        print(f"[Demod Debug] Fase residual={np.degrees(phase_check):.1f}°")
+        print(f"[Demod Debug] Pow(RX)={np.mean(np.abs(rx_cpr)**2):.6f}, Pow(TX)={np.mean(np.abs(tx_aligned)**2):.6f}")
+        print(f"[Demod Debug] Primeros 5 TX: {tx_aligned[:5]}")
+        print(f"[Demod Debug] Primeros 5 RX: {rx_cpr[:5]}")
+        print(f"[Demod Debug] SNR={snr_db:.2f} dB, BER={ber:.6e}")
+    
+    return {
+        'rx_syms': rx_cpr,
+        'snr_linear': snr_lin,
+        'snr_db': snr_db,
+        'ber': ber,
+        'delay_samp': delay_used,
+        'tx_aligned': tx_aligned,
+        'rx_aligned': rx_cpr
+    }

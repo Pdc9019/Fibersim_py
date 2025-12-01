@@ -191,9 +191,9 @@ def plot_waveform_comparison(
     axes[0].plot(t_us, tx_seg.imag, 'r-', linewidth=1.0, label='Q (Quadrature)', alpha=0.8)
     axes[0].set_ylabel('Amplitud [a.u.]', fontsize=11)
     
-    title_tx = 'Señal Transmitida (TX) - Post Pulse Shaping + AWGN TX'
+    title_tx = 'Señal Transmitida (TX)'
     if show_snr_metrics and tx_power_dbm is not None:
-        title_tx += f'\nPotencia: {tx_power_dbm:.2f} dBm'
+        title_tx += f' | Potencia: {tx_power_dbm:.2f} dBm'
     axes[0].set_title(title_tx, fontsize=12, fontweight='bold', pad=10)
     axes[0].grid(True, alpha=0.3, linestyle='--')
     axes[0].legend(loc='upper right', framealpha=0.9, fontsize=10)
@@ -206,12 +206,12 @@ def plot_waveform_comparison(
     if n_plots == 2:
         axes[1].set_xlabel('Tiempo [μs]', fontsize=11)
     
-    title_rx = 'Señal Recibida (RX Pre-DSP) - Post Propagación Óptica + AWGN RX'
+    title_rx = 'Señal Recibida (Pre-DSP)'
     if show_snr_metrics and rx_power_dbm is not None:
         gain_db = rx_power_dbm - tx_power_dbm if tx_power_dbm is not None else None
-        title_rx += f'\nPotencia: {rx_power_dbm:.2f} dBm'
+        title_rx += f' | Potencia: {rx_power_dbm:.2f} dBm'
         if gain_db is not None:
-            title_rx += f' (Ganancia sistema: {gain_db:.2f} dB)'
+            title_rx += f' | Ganancia: {gain_db:.2f} dB'
     axes[1].set_title(title_rx, fontsize=12, fontweight='bold', pad=10)
     axes[1].grid(True, alpha=0.3, linestyle='--')
     axes[1].legend(loc='upper right', framealpha=0.9, fontsize=10)
@@ -230,9 +230,9 @@ def plot_waveform_comparison(
         axes[2].set_ylabel('Amplitud [a.u.]', fontsize=11)
         axes[2].set_xlabel('Tiempo [μs]', fontsize=11)
         
-        title_post = 'Señal Recibida (RX Post-DSP) - Post Matched Filter RRC'
+        title_post = 'Señal Recibida (Post-DSP)'
         if show_snr_metrics and rx_post_power_dbm is not None:
-            title_post += f'\nPotencia: {rx_post_power_dbm:.2f} dBm'
+            title_post += f' | Potencia: {rx_post_power_dbm:.2f} dBm'
         axes[2].set_title(title_post, fontsize=12, fontweight='bold', pad=10)
         axes[2].grid(True, alpha=0.3, linestyle='--')
         axes[2].legend(loc='upper right', framealpha=0.9, fontsize=10)

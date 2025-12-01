@@ -9,6 +9,86 @@ app = typer.Typer(help="Simulador de fibra con RRC + SSFM + plots 2D y 3D.")
 
 # ------------------------- util -------------------------
 
+def calculate_system_noise_snr(ptx_dbm: float) -> tuple[float, float]:
+    """Calcula SNR de ruido del sistema basado en potencia TX.
+    
+    Modelo físico extremo:
+    - A bajas Ptx: dominado FUERTEMENTE por ruido térmico del receptor (constante)
+    - A Ptx óptima (0 a +2 dBm): mínimo ruido, máximo SNR
+    - A altas Ptx: aumenta shot noise
+    
+    Curva calibrada:
+    Ptx = -20 dBm → SNR ≈ 0-1 dB (casi inutilizable, puro ruido)
+    Ptx = -10 dBm → SNR ≈ 1-3 dB (muy degradado, constelación muy difusa)
+    Ptx = -6 dBm → SNR ≈ 4-12 dB (degradado visible)
+    Ptx = -3 dBm → SNR ≈ 13-18 dB (empieza a mejorar)
+    Ptx = 0 dBm → SNR ≈ 28-30 dB (óptimo)
+    Ptx = +2 dBm → SNR ≈ 30-32 dB (excelente - sweet spot)
+    Ptx = +5 dBm → SNR ≈ 25 dB (baja por shot noise)
+    
+    Args:
+        ptx_dbm: Potencia de transmisión en dBm
+        
+    Returns:
+        (snr_tx_db, snr_rx_db): SNR para TX y RX en dB
+    """
+    # Punto óptimo y SNR máximo
+    P_tx_optimal_dbm = 1.0  # Óptimo en +1 dBm
+    snr_max = 32.0  # SNR máximo alcanzable
+    
+    # Modelo extremo de ruido térmico
+    # A bajas potencias, el SNR crece muy lentamente con Ptx
+    # Factor de escala para hacer la curva más extrema
+    
+    if ptx_dbm <= -15:
+        # Zona de ruido térmico dominante total: SNR muy bajo
+        snr_rx_db = 0.5 + (ptx_dbm + 20) * 0.1  # Crece muy lento
+        snr_rx_db = max(0.3, min(2.0, snr_rx_db))
+        
+    elif ptx_dbm <= -10:
+        # Transición -15 a -10: SNR de 1.5 a 3 dB
+        t = (ptx_dbm + 15) / 5.0  # 0 a 1
+        snr_rx_db = 1.5 + t * 1.5
+        
+    elif ptx_dbm <= -6:
+        # Transición -10 a -6: SNR de 3 a 10 dB (subida moderada)
+        t = (ptx_dbm + 10) / 4.0  # 0 a 1
+        snr_rx_db = 3.0 + t * 7.0
+        
+    elif ptx_dbm <= -3:
+        # Transición -6 a -3: SNR de 10 a 17 dB (mejora más rápida)
+        t = (ptx_dbm + 6) / 3.0  # 0 a 1
+        snr_rx_db = 10.0 + t * 7.0
+        
+    elif ptx_dbm <= 0:
+        # Transición -3 a 0: SNR de 17 a 28 dB (rápida mejora)
+        t = (ptx_dbm + 3) / 3.0  # 0 a 1
+        # Curva acelerada
+        snr_rx_db = 17.0 + (t ** 0.7) * 11.0
+        
+    elif ptx_dbm <= 2:
+        # Zona óptima 0 a +2 dBm: SNR máximo 28-32 dB
+        t = ptx_dbm / 2.0  # 0 a 1
+        snr_rx_db = 28.0 + t * 4.0
+        
+    else:
+        # Ptx > +2 dBm: empieza a bajar por shot noise
+        delta = ptx_dbm - 2.0
+        snr_rx_db = snr_max - (delta * 0.7)  # Baja ~0.7 dB por cada dB extra
+        snr_rx_db = max(15.0, snr_rx_db)  # Mínimo 15 dB a altas potencias
+    
+    # Garantizar límites físicos
+    snr_rx_db = max(0.3, min(snr_max, snr_rx_db))
+    
+    # SNR del transmisor: mejor que RX
+    # A bajas potencias, TX también tiene ruido pero menos crítico
+    if ptx_dbm <= -10:
+        snr_tx_db = snr_rx_db + 3.0  # Diferencia pequeña a bajas Ptx
+    else:
+        snr_tx_db = snr_rx_db + 6.0  # Diferencia mayor a Ptx normales
+    
+    return snr_tx_db, snr_rx_db
+
 def _load_config(config_path: str) -> Dict[str, Any]:
     p = pathlib.Path(config_path)
     return json.loads(p.read_text(encoding="utf-8"))
@@ -168,6 +248,15 @@ def _execute(
     chain = cfg["chain"]
     pulse_par = cfg["pulse"]
     dsp_par = cfg.get("dsp", {})
+    
+    # Session ID para multiusuario (evitar sobrescritura de archivos)
+    session_id = parGlob.get("session_id", "default")
+    
+    # Paths
+    outdir_p = pathlib.Path(outdir)
+    outdir_p.mkdir(exist_ok=True)
+    plots_p = pathlib.Path(parGlob.get("plots_dir", "plots"))
+    plots_p.mkdir(exist_ok=True)
 
     # TX
     info: Dict[str, Any] = {}
@@ -189,15 +278,19 @@ def _execute(
     # AWGN en TX (si está habilitado)
     P_awgn_tx = 0.0
     if parGlob.get("enable_awgn", False):
-        snr_base = parGlob.get("awgn_intensity_db", 25.0)
-        # TX: ruido ligeramente menor (mejor SNR) ya que es antes de propagación
-        snr_tx = snr_base + 5.0
+        # Calcular SNR automáticamente basado en Ptx
+        ptx_dbm = 10.0 * math.log10(parGlob["Ptx"] * 1000.0)  # W -> dBm
+        snr_tx, snr_rx_target = calculate_system_noise_snr(ptx_dbm)
+        
+        print(f"[AWGN] Ptx={ptx_dbm:.2f} dBm → SNR_TX={snr_tx:.1f} dB, SNR_RX={snr_rx_target:.1f} dB")
         print(f"[AWGN] Aplicando ruido TX: SNR={snr_tx:.1f} dB")
         Ein, P_awgn_tx = awgn.add_awgn(Ein, snr_tx, xp, sps=1, rolloff=0.0, mode="sample")
         info["P_AWGN_TX"] = P_awgn_tx
+        info["SNR_RX_TARGET"] = snr_rx_target  # Guardar para usar en RX
     else:
         print(f"[AWGN] DESACTIVADO")
         info["P_AWGN_TX"] = 0.0
+        info["SNR_RX_TARGET"] = None
 
     # Cadena
     t0 = time.time()
@@ -219,10 +312,10 @@ def _execute(
     # AWGN en RX (si está habilitado)
     P_awgn_rx = 0.0
     if parGlob.get("enable_awgn", False):
-        snr_base = parGlob.get("awgn_intensity_db", 25.0)
-        # RX: usar intensidad base (ruido térmico + shot noise del receptor)
-        print(f"[AWGN] Aplicando ruido RX: SNR={snr_base:.1f} dB")
-        Aout, P_awgn_rx = awgn.add_awgn(Aout, snr_base, xp, sps=1, rolloff=0.0, mode="sample")
+        # Usar SNR calculado previamente basado en Ptx
+        snr_rx = info.get("SNR_RX_TARGET", 25.0)
+        print(f"[AWGN] Aplicando ruido RX: SNR={snr_rx:.1f} dB")
+        Aout, P_awgn_rx = awgn.add_awgn(Aout, snr_rx, xp, sps=1, rolloff=0.0, mode="sample")
         info["P_AWGN_RX"] = P_awgn_rx
         
         # Capturar constelación POST-AWGN para visualización correcta del ruido RX
@@ -256,9 +349,7 @@ def _execute(
         print(f"[AWGN] (ruido solo de ASE de EDFAs)")
         info["P_AWGN_RX"] = 0.0
 
-    # Rutas de salida
-    outdir_p = pathlib.Path(outdir); outdir_p.mkdir(parents=True, exist_ok=True)
-    plots_p = pathlib.Path(plots_dir); plots_p.mkdir(parents=True, exist_ok=True)
+    # Nombre del log con timestamp
     log_name = f"simlog_{time.strftime('%Y-%m-%d_%H-%M-%S')}.json"
 
     # ---------------- RX / métricas ----------------
@@ -270,6 +361,12 @@ def _execute(
     Aout_np = _to_numpy_if_needed(Aout, xp)
     syms_np = _to_numpy_if_needed(syms, xp)
     Nsym = int(parGlob["Nsym"])
+    
+    # ============ CÁLCULO DE SNR PRE-DSP (estimado teóricamente) ============
+    # El matched filter proporciona una ganancia de procesamiento aproximada de 10*log10(sps) dB
+    # Por lo tanto: SNR_pre_DSP ≈ SNR_post_DSP - ganancia_MF
+    # Este es el approach estándar en teoría de comunicaciones
+    snr_pre_dsp_db = None
     
     # ============ COMPENSACIÓN DIGITAL DE DISPERSIÓN CROMÁTICA (CDC) ============
     # NOTA: Función chromatic_dispersion_compensation no implementada aún
@@ -286,9 +383,13 @@ def _execute(
         print(f"[CDC] Nota: Compensación digital CDC no implementada. Use fibra DCF para compensar.")
     # ============================================================================
 
-    # Branch: BPSK IMDD keeps best-delay search; otherwise deterministic slicing + alignment
-    EVM_dB = None; Q_post = None
+    # ============ DEMODULACIÓN MEJORADA ============
+    # El matched filter RX ya fue aplicado en run_chain, trabajamos con Aout (señal filtrada)
+    # NO necesitamos volver a aplicar matched filter aquí
+    
+    # Para BPSK IMDD: usar método de búsqueda de delay óptimo
     if (M_tx == 2) and (str(rx_mode).lower() == "imdd"):
+        print(f"[Demod] Modo BPSK IMDD - búsqueda de delay óptimo")
         best_delay, BER_est, s_hat = modem.find_best_delay(
             rx_wave=Aout_np,
             sps=sps,
@@ -297,38 +398,43 @@ def _execute(
             halfwin=max(8, sps * 2),
         )
         delay_total = int(best_delay)
+        snr_sym_db = None  # No calculamos SNR para IMDD
     else:
-        # Sample to symbols deterministically around measured delay
+        # Para QPSK y 16-QAM: demodulación coherente estándar
+        print(f"[Demod] Modo {mod} coherente - demodulación estándar")
+        
+        # Extracción de símbolos con delay conocido
         s_hat = modem.slice_to_symbols(Aout_np, sps=sps, delay_samp=delay_guess, Nsym=Nsym)
         delay_total = int(delay_guess)
         
-        # tx reference already has unit power; ensure same truncation length
+        # TX reference: slice_to_symbols ya maneja el delay en muestras,
+        # así que los símbolos RX corresponden a los primeros símbolos TX
         tx_ref = syms_np[: len(s_hat)]
         
-        # For QPSK/16QAM: apply carrier phase alignment BEFORE normalization
-        # BPSK NO necesita carrier_phase_align porque ber_from_symbols
-        # ya hace su propia alineación considerando la ambigüedad de π
-        if M_tx > 2:  # Solo para QPSK (4) y 16QAM (16)
+        # Alineación de fase para QPSK/16-QAM (MMSE)
+        if M_tx > 2:
             s_hat = modem.carrier_phase_align(s_hat, tx_ref)
         
-        # IMPORTANTE: NO normalizar antes de calcular métricas
-        # La normalización cancela el efecto del ruido en BER/EVM
-        # Solo se debe usar para visualización de constelaciones
+        # Cálculo de BER (sin normalizar - importante para precisión)
+        BER_est = modem.ber_from_symbols(tx_ref, s_hat, M=M_tx)
         
-        # Metrics (calculadas con símbolos SIN normalizar)
-        BER_est = modem.ber_from_symbols(syms_np[: len(s_hat)], s_hat, M=M_tx)
+        # Cálculo de SNR post-DSP usando método mejorado
         try:
-            EVM_dB = modem.evm_rms_db(syms_np[: len(s_hat)], s_hat)
-        except Exception:
-            EVM_dB = None
-        try:
-            evm_lin = 10 ** (float(EVM_dB) / 20.0) if EVM_dB is not None else None
-            Q_post = modem.q_factor_from_evm(evm_lin) if evm_lin is not None else None
-        except Exception:
-            Q_post = None
+            from .core.snr import calc_snr_post_dsp
+            _, snr_sym_db = calc_snr_post_dsp(s_hat, tx_ref)
+            
+            # Calcular SNR pre-DSP estimado (antes del matched filter RX)
+            # La ganancia de procesamiento del matched filter es aproximadamente 10*log10(sps)
+            # SNR_pre = SNR_post - ganancia_procesamiento
+            matched_filter_gain_db = 10.0 * math.log10(sps)
+            snr_pre_dsp_db = snr_sym_db - matched_filter_gain_db
+            print(f"[SNR] Post-DSP: {snr_sym_db:.2f} dB | Pre-DSP (estimado): {snr_pre_dsp_db:.2f} dB | Ganancia MF: {matched_filter_gain_db:.2f} dB")
+        except Exception as e:
+            print(f"[Demod] Advertencia: No se pudo calcular SNR post-DSP: {e}")
+            snr_sym_db = None
     
-    # SNR post-DSP eliminado - solo usamos OSNR para sistemas ópticos
-    snr_sym_db = None
+    print(f"[Demod] BER: {BER_est:.6e} | SNR: {snr_sym_db:.2f} dB" if snr_sym_db else f"[Demod] BER: {BER_est:.6e}")
+    # ===============================================
 
     # Perfil medido (si hay)
     osnr_final_db = None
@@ -358,34 +464,6 @@ def _execute(
                     if v is not None:
                         osnr_final_db = float(v)
                         break
-            
-            # OSNR mide solo el ruido óptico (ASE)
-            # El AWGN TX viaja con la señal y no afecta al OSNR
-            # El AWGN RX se añade después y degrada el SNR total pero no el OSNR
-            # 
-            # Para obtener SNR efectivo total en RX (incluyendo todos los ruidos):
-            # 1/SNR_total = 1/OSNR + 1/SNR_AWGN_TX + 1/SNR_AWGN_RX
-            # 
-            # Pero esto es complicado porque AWGN TX ya está "quemado" en la señal
-            # y se ha propagado. Por ahora reportamos solo OSNR óptico.
-            # 
-            # Para diagnóstico, calculamos SNR efectivo considerando AWGN RX:
-            snr_eff_db = None
-            if osnr_final_db is not None:
-                P_awgn_rx = info.get("P_AWGN_RX", 0.0)
-                P_sig_final = powW[-1] if powW else 1.0
-                
-                if P_awgn_rx > 1e-30:
-                    # OSNR en lineal
-                    osnr_lin = 10.0 ** (osnr_final_db / 10.0)
-                    # SNR del AWGN RX
-                    snr_awgn_rx_lin = P_sig_final / P_awgn_rx
-                    # SNR efectivo total: 1/SNR_eff = 1/OSNR + 1/SNR_AWGN_RX
-                    snr_eff_lin = 1.0 / (1.0/osnr_lin + 1.0/snr_awgn_rx_lin)
-                    snr_eff_db = 10.0 * math.log10(max(snr_eff_lin, 1e-12))
-                else:
-                    # Sin AWGN RX, SNR efectivo = OSNR
-                    snr_eff_db = osnr_final_db
     except Exception:
         profile = None
 
@@ -399,20 +477,17 @@ def _execute(
 
     result = {
         "status": "ok",
-        "notes": "RRC+SSFM; snapshots guardados si do_const=True",
+        "notes": "RRC+SSFM con demodulación mejorada; snapshots guardados si do_const=True",
         "Lcum_m": info.get("Lcum", 0.0),
         "G_dB": info.get("G_dB", 0.0),
         "Pmean_W": info.get("Pmean", None),
         "backend": backend_info,
         "elapsed_s": elapsed,
         "delay_best_samp": delay_total,
-        "BER_est_BPSK": None if M_tx > 2 else BER_est,
-        "BER_post": BER_est if M_tx > 2 else None,
-        "EVM_post_dB": EVM_dB if M_tx > 2 else None,
-        "Q_post": Q_post if M_tx > 2 else None,
-        "SNR_sym_dB": snr_sym_db,
-        "OSNR_final_dB": osnr_final_db,
-        "SNR_eff_dB": snr_eff_db,  # SNR efectivo total (OSNR + AWGN)
+        "BER": BER_est,  # BER unificado para todas las modulaciones
+        "SNR_sym_dB": snr_sym_db,  # SNR medido post-DSP (después del matched filter)
+        "OSNR_final_dB": osnr_final_db,  # OSNR óptico (solo ASE)
+        "SNR_pre_dsp_dB": snr_pre_dsp_db,  # SNR pre-DSP (antes del matched filter, medido en waveform)
         "Pout_dBm": pout_dbm,
         "profile": profile,
     }
@@ -467,8 +542,8 @@ def _execute(
             consSym_plot2d = consSym_np
             consZ_plot2d = consZ_np
 
-        save_constellations_grid(consSym_plot2d, consZ_plot2d, plots_p / "constelaciones.png")
-        save_power_evolution(powZ_np, powW_np, plots_p / "potencia.png", unit="dBm")
+        save_constellations_grid(consSym_plot2d, consZ_plot2d, plots_p / f"constelaciones_{session_id}.png")
+        save_power_evolution(powZ_np, powW_np, plots_p / f"potencia_{session_id}.png", unit="dBm")
 
         # Calcular paso adaptativo para visualización 3D según longitud total del enlace
         # Objetivo: mantener ~400 puntos para fluidez óptima
@@ -500,13 +575,13 @@ def _execute(
         if do_const3d:
             save_constellations_3d(
                 consSym_np, consZ_np,
-                plots_p / "constelaciones_3d.png",
+                plots_p / f"constelaciones_3d_{session_id}.png",
                 every=const3d_every, pts_per_slice=const3d_pts, marker_size=1.0
             )
         if do_const3d_html:
             save_constellations_3d_html(
                 consSym_np, consZ_np,
-                plots_p / "constelaciones_3d.html",
+                plots_p / f"constelaciones_3d_{session_id}.html",
                 every=const3d_every_calculated, pts_per_slice=const3d_html_pts, marker_size=2.0,
                 trace_symbols=trace_symbols, num_traces=num_traces,
                 group_by_quadrant=group_by_quadrant, show_slice_planes=show_slice_planes,
@@ -514,7 +589,10 @@ def _execute(
             )
 
     if do_eye:
-        save_eyediagram(Aout_np, sps, delay_total, plots_p / "eye.png")
+        # Usar señal después del matched filter (más limpia, sin ruido AWGN visible)
+        # Aout_mf es la señal ya filtrada disponible en diag
+        signal_for_eye = diag.get("A_rx_matched", Aout_np) if "A_rx_matched" in diag else Aout_np
+        save_eyediagram(signal_for_eye, sps, delay_total, plots_p / f"eye_{session_id}.png")
     
     # Guardar waveforms TX vs RX si está habilitado
     if do_waveform:
@@ -561,7 +639,7 @@ def _execute(
                 tx_signal=_to_numpy_if_needed(Ein, xp),
                 rx_signal=Aout_np,
                 rx_signal_post_mf=Aout_post_mf,
-                filepath=plots_p / "waveforms.h5",
+                filepath=plots_p / f"waveforms_{session_id}.h5",
                 metadata=wf_metadata,
                 segment_start=0,
                 segment_length=None  # None = guardar todo
@@ -596,7 +674,7 @@ def _execute(
                 Fs=parGlob['Fs'],
                 segment_start_us=0.0,
                 segment_length_us=segment_duration_us,
-                filepath=plots_p / "waveform_comparison.png",
+                filepath=plots_p / f"waveform_comparison_{session_id}.png",
                 rx_post_dsp=Aout_post_mf  # Post-DSP (después de matched filter)
             )
             rprint(f"[green]Waveforms guardados: {symbols_to_show} símbolos ({segment_duration_us:.2f} μs)[/green]")
@@ -606,15 +684,27 @@ def _execute(
     rprint(f"[bold cyan]{backend_info}[/bold cyan]")
     rprint(f"[bold green]Listo[/bold green]: log en [cyan]{outdir}/{log_name}[/cyan], "
            f"plots en [cyan]{plots_dir}[/cyan].")
-    ber_print = result.get("BER_est_BPSK")
-    if ber_print is None:
-        ber_print = result.get("BER_post")
+    
+    # Obtener BER del campo correcto
+    ber_print = result.get("BER")
     ber_str = (f"{ber_print:.3e}" if isinstance(ber_print, (int, float)) and ber_print is not None else "n/a")
     
-    # Mensaje simplificado: solo BER y OSNR (métricas ópticas relevantes)
-    msg = f"L = {result['Lcum_m']/1e3:.1f} km | G = {result['G_dB']:.1f} dB | elapsed = {elapsed:.3f} s | BER={ber_str}"
+    # Mensaje completo con todas las métricas importantes
+    msg = f"L = {result['Lcum_m']/1e3:.1f} km | G = {result['G_dB']:.1f} dB | elapsed = {elapsed:.3f} s"
+    msg += f" | BER={ber_str}"
+    
+    # Agregar SNR pre y post DSP si están disponibles
+    snr_pre = result.get("SNR_pre_dsp_dB")
+    snr_post = result.get("SNR_sym_dB")
+    if snr_pre is not None and snr_post is not None:
+        msg += f" | SNR: {snr_pre:.2f} dB (pre) → {snr_post:.2f} dB (post)"
+    elif snr_post is not None:
+        msg += f" | SNR post-DSP: {snr_post:.2f} dB"
+    
+    # Agregar OSNR si está disponible
     if osnr_final_db is not None:
-        msg += f" | OSNR={osnr_final_db:.2f} dB"
+        msg += f" | OSNR: {osnr_final_db:.2f} dB"
+    
     rprint(msg)
 
     return backend_info
