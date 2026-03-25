@@ -1,4 +1,4 @@
-# Manual del Simulador FiberSim (orientado a la GUI)
+# Simulador FiberSim 
 
 Este documento describe el flujo completo del simulador desde la GUI, los componentes internos clave y el porqué de las decisiones de diseño. Al final incluye un diagrama de flujo del pipeline de simulación.
 
